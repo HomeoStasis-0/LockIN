@@ -3,6 +3,9 @@ import json
 import pdfplumber
 from groq import Groq
 
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
+
 # 1. Setup Groq Client
 # Ensure you set this environment variable in your terminal or .env file
 # export GROQ_API_KEY='your_groq_api_key_here'
@@ -28,50 +31,64 @@ def extract_text_from_pdf(pdf_path):
         return None
 
 def generate_study_material(context_text):
-    """
-    Sends text to GroqCloud to generate JSON for quizzes and flashcards[cite: 42, 52].
-    """
-    print("Generating study materials via GroqCloud...")
+    print("Generating study materials via Groq Structured Outputs...")
 
-    # Define the strict JSON schema for the AI to follow
-    prompt = f"""
-    You are an AI study assistant for the LockIN app.
-    Analyze the following lecture notes and generate a study set.
-
-    Output strictly valid JSON with no markdown formatting. The JSON must follow this structure:
-    {{
-      "flashcards": [
-        {{ "front": "Concept/Term", "back": "Definition/Explanation" }}
-      ],
-      "quiz": [
-        {{
-          "question": "Question text here?",
-          "options": ["Option A", "Option B", "Option C", "Option D"],
-          "correct_answer": "Option A"
-        }}
-      ]
-    }}
-
-    Lecture Notes:
-    {context_text}
-    """
+    # Define the JSON Schema
+    study_material_schema = {
+        "type": "object",
+        "properties": {
+            "flashcards": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "front": {"type": "string"},
+                        "back": {"type": "string"}
+                    },
+                    "required": ["front", "back"],
+                    "additionalProperties": False
+                }
+            },
+            "quiz": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string"},
+                        "options": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 4,
+                            "maxItems": 4
+                        },
+                        "correct_answer": {"type": "string"}
+                    },
+                    "required": ["question", "options", "correct_answer"],
+                    "additionalProperties": False
+                }
+            }
+        },
+        "required": ["flashcards", "quiz"],
+        "additionalProperties": False
+    }
 
     try:
         chat_completion = client.chat.completions.create(
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful study assistant that outputs only valid JSON."
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
+                {"role": "system", "content": "You are a helpful study assistant. Extract concepts and questions from the text."},
+                {"role": "user", "content": f"Lecture Notes: {context_text}"}
             ],
-            # Llama 3 is a good default for Groq, but swap to Mixtral if preferred
-            model="llama3-8b-8192",
-            temperature=0.5, # Lower temperature for more deterministic JSON
-            response_format={"type": "json_object"}, # Ensures valid JSON output
+            # Use a model that supports Structured Outputs
+            model="openai/gpt-oss-120b",
+            temperature=0.3,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "study_set",
+                    "strict": False, # This is 'Best-effort Mode'
+                    "schema": study_material_schema
+                }
+            },
         )
 
         return chat_completion.choices[0].message.content
@@ -80,6 +97,7 @@ def generate_study_material(context_text):
         print(f"Error calling Groq API: {e}")
         return None
 
+    
 def main():
     # Example usage
     pdf_file = "lecture_notes.pdf" # Replace with your actual file path
@@ -94,7 +112,7 @@ def main():
         if json_output:
             # 3. Save/Export [cite: 52]
             output_filename = "study_set.json"
-            with open(output_filename, "w") as f:
+            with open(output_filename, "w", encoding="utf-8") as f:
                 f.write(json_output)
 
             print(f"Success! Study set saved to {output_filename}")
