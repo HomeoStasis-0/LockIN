@@ -3,6 +3,10 @@
 	"version": "0.1.0",
 	"description": "LockIN project",
 	"main": "index.js",
+	"engines": {
+		"node": "24.13.0",
+		"npm": "11.6.2"
+	},
 	"scripts": {
 		"start": "node index.js",
 		"test:spaced": "node backEnd/test_spaced_repetition.js",
