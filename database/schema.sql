@@ -1,7 +1,7 @@
 BEGIN;
 
--- ---------- User ----------
-CREATE TABLE "User" (
+-- ---------- Users ----------
+CREATE TABLE users (
   user_id        BIGSERIAL PRIMARY KEY,
   username       TEXT NOT NULL UNIQUE,
   email          TEXT NOT NULL UNIQUE,
@@ -10,9 +10,9 @@ CREATE TABLE "User" (
 );
 
 -- ---------- Deck ----------
-CREATE TABLE "Deck" (
+CREATE TABLE deck (
   id            BIGSERIAL PRIMARY KEY,
-  user_id       BIGINT NOT NULL REFERENCES "User"(user_id) ON DELETE CASCADE,
+  user_id       BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
   deck_name     TEXT NOT NULL,
   subject       TEXT,
   course_number INTEGER,
@@ -21,9 +21,9 @@ CREATE TABLE "Deck" (
 );
 
 -- ---------- Card ----------
-CREATE TABLE "Card" (
+CREATE TABLE card (
   id            BIGSERIAL PRIMARY KEY,
-  deck_id       BIGINT NOT NULL REFERENCES "Deck"(id) ON DELETE CASCADE,
+  deck_id       BIGINT NOT NULL REFERENCES deck(id) ON DELETE CASCADE,
   card_front    TEXT NOT NULL,
   card_back     TEXT NOT NULL,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -35,9 +35,9 @@ CREATE TABLE "Card" (
 );
 
 -- ---------- PublicDeck ----------
-CREATE TABLE "PublicDeck" (
+CREATE TABLE public_deck (
   id            BIGSERIAL PRIMARY KEY,
-  user_id       BIGINT NOT NULL REFERENCES "User"(user_id) ON DELETE CASCADE,
+  user_id       BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
   deck_name     TEXT NOT NULL,
   subject       TEXT,
   course_number INTEGER,
@@ -46,61 +46,61 @@ CREATE TABLE "PublicDeck" (
 );
 
 -- ---------- Join Tables ----------
-CREATE TABLE "UserDeck" (
+CREATE TABLE user_deck (
   id      BIGSERIAL PRIMARY KEY,
-  user_id BIGINT NOT NULL REFERENCES "User"(user_id) ON DELETE CASCADE,
-  deck_id BIGINT NOT NULL REFERENCES "Deck"(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  deck_id BIGINT NOT NULL REFERENCES deck(id) ON DELETE CASCADE,
   UNIQUE (user_id, deck_id)
 );
 
-CREATE TABLE "DeckCard" (
+CREATE TABLE deck_card (
   id      BIGSERIAL PRIMARY KEY,
-  deck_id BIGINT NOT NULL REFERENCES "Deck"(id) ON DELETE CASCADE,
-  card_id BIGINT NOT NULL REFERENCES "Card"(id) ON DELETE CASCADE,
+  deck_id BIGINT NOT NULL REFERENCES deck(id) ON DELETE CASCADE,
+  card_id BIGINT NOT NULL REFERENCES card(id) ON DELETE CASCADE,
   UNIQUE (deck_id, card_id)
 );
 
-CREATE TABLE "PublicDeckCard" (
+CREATE TABLE public_deck_card (
   id             BIGSERIAL PRIMARY KEY,
-  public_deck_id BIGINT NOT NULL REFERENCES "PublicDeck"(id) ON DELETE CASCADE,
-  card_id        BIGINT NOT NULL REFERENCES "Card"(id) ON DELETE CASCADE,
+  public_deck_id BIGINT NOT NULL REFERENCES public_deck(id) ON DELETE CASCADE,
+  card_id        BIGINT NOT NULL REFERENCES card(id) ON DELETE CASCADE,
   UNIQUE (public_deck_id, card_id)
 );
 
-CREATE TABLE "UserPublicDeck" (
+CREATE TABLE user_public_deck (
   id             BIGSERIAL PRIMARY KEY,
-  user_id        BIGINT NOT NULL REFERENCES "User"(user_id) ON DELETE CASCADE,
-  public_deck_id BIGINT NOT NULL REFERENCES "PublicDeck"(id) ON DELETE CASCADE,
+  user_id        BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  public_deck_id BIGINT NOT NULL REFERENCES public_deck(id) ON DELETE CASCADE,
   UNIQUE (user_id, public_deck_id)
 );
 
 -- ---------- UserRating ----------
-CREATE TABLE "UserRating" (
+CREATE TABLE user_rating (
   id      BIGSERIAL PRIMARY KEY,
-  user_id BIGINT NOT NULL REFERENCES "User"(user_id) ON DELETE CASCADE,
-  deck_id BIGINT NOT NULL REFERENCES "Deck"(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  deck_id BIGINT NOT NULL REFERENCES deck(id) ON DELETE CASCADE,
   rating  INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
   UNIQUE (user_id, deck_id)
 );
 
 -- ---------- Helpful indexes ----------
-CREATE INDEX idx_deck_user_id            ON "Deck"(user_id);
-CREATE INDEX idx_card_deck_id            ON "Card"(deck_id);
-CREATE INDEX idx_publicdeck_user_id      ON "PublicDeck"(user_id);
+CREATE INDEX idx_deck_user_id            ON deck(user_id);
+CREATE INDEX idx_card_deck_id            ON card(deck_id);
+CREATE INDEX idx_publicdeck_user_id      ON public_deck(user_id);
 
-CREATE INDEX idx_userdeck_user_id        ON "UserDeck"(user_id);
-CREATE INDEX idx_userdeck_deck_id        ON "UserDeck"(deck_id);
+CREATE INDEX idx_userdeck_user_id        ON user_deck(user_id);
+CREATE INDEX idx_userdeck_deck_id        ON user_deck(deck_id);
 
-CREATE INDEX idx_deckcard_deck_id        ON "DeckCard"(deck_id);
-CREATE INDEX idx_deckcard_card_id        ON "DeckCard"(card_id);
+CREATE INDEX idx_deckcard_deck_id        ON deck_card(deck_id);
+CREATE INDEX idx_deckcard_card_id        ON deck_card(card_id);
 
-CREATE INDEX idx_publicdeckcard_pd_id    ON "PublicDeckCard"(public_deck_id);
-CREATE INDEX idx_publicdeckcard_card_id  ON "PublicDeckCard"(card_id);
+CREATE INDEX idx_publicdeckcard_pd_id    ON public_deck_card(public_deck_id);
+CREATE INDEX idx_publicdeckcard_card_id  ON public_deck_card(card_id);
 
-CREATE INDEX idx_userpublicdeck_user_id  ON "UserPublicDeck"(user_id);
-CREATE INDEX idx_userpublicdeck_pd_id    ON "UserPublicDeck"(public_deck_id);
+CREATE INDEX idx_userpublicdeck_user_id  ON user_public_deck(user_id);
+CREATE INDEX idx_userpublicdeck_pd_id    ON user_public_deck(public_deck_id);
 
-CREATE INDEX idx_userrating_user_id      ON "UserRating"(user_id);
-CREATE INDEX idx_userrating_deck_id      ON "UserRating"(deck_id);
+CREATE INDEX idx_userrating_user_id      ON user_rating(user_id);
+CREATE INDEX idx_userrating_deck_id      ON user_rating(deck_id);
 
-COMMIT; 
+COMMIT;
