@@ -26,7 +26,13 @@ async function importFlashcardsIntoDeck(deckId, flashcards) {
           card_back: card.back || '',
         })
         .returning('id');
-      if (row) inserted++;
+      if (row) {
+        await trx('DeckCard').insert({
+          deck_id: deckId,
+          card_id: row.id,
+        });
+        inserted++;
+      }
     }
     await trx.commit();
     return { inserted };
