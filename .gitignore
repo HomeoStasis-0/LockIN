@@ -56,3 +56,6 @@ Thumbs.db
 secrets.txt
 .env
 
+# Uploads (temp PDFs)
+uploads/
+

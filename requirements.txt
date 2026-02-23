@@ -3,4 +3,6 @@ SQLAlchemy
 alembic
 python-dotenv
 passlib[bcrypt]
+pdfplumber
+groq
 

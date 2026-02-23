@@ -97,29 +97,34 @@ def generate_study_material(context_text):
         print(f"Error calling Groq API: {e}")
         return None
 
-    
+def run_pipeline(pdf_path):
+    """
+    Extract text from PDF and generate study materials.
+    Returns JSON string or None on failure.
+    When run as CLI: accepts pdf_path as arg, prints JSON to stdout (errors to stderr).
+    """
+    raw_text = extract_text_from_pdf(pdf_path)
+    if not raw_text:
+        return None
+    return generate_study_material(raw_text)
+
+
 def main():
-    # Example usage
-    pdf_file = "lecture_notes.pdf" # Replace with your actual file path
+    import sys
+    if len(sys.argv) < 2:
+        print("Usage: python pdf_to_quiz.py <path_to_pdf>", file=sys.stderr)
+        sys.exit(1)
 
-    # 1. Extract
-    raw_text = extract_text_from_pdf(pdf_file)
+    pdf_file = sys.argv[1]
+    json_output = run_pipeline(pdf_file)
 
-    if raw_text:
-        # 2. Generate
-        json_output = generate_study_material(raw_text)
+    if json_output:
+        # Print JSON to stdout for Node.js to capture
+        print(json_output)
+    else:
+        print("Error: Failed to generate study materials.", file=sys.stderr)
+        sys.exit(1)
 
-        if json_output:
-            # 3. Save/Export [cite: 52]
-            output_filename = "study_set.json"
-            with open(output_filename, "w", encoding="utf-8") as f:
-                f.write(json_output)
-
-            print(f"Success! Study set saved to {output_filename}")
-
-            # Optional: Print a snippet to verify
-            data = json.loads(json_output)
-            print(f"Generated {len(data['flashcards'])} flashcards and {len(data['quiz'])} quiz questions.")
 
 if __name__ == "__main__":
     main()
