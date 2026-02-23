@@ -51,11 +51,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const data = await res.json();
 
     if (!res.ok) {
-      // Throw backend error so frontend can display it
       throw new Error(data.error || "Login failed");
     }
 
-    // directly set the user from the response instead of refetching
     setUser({
       user_id: data.user_id,
       username: data.username,
@@ -70,7 +68,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       credentials: "include",
       body: JSON.stringify({ username, email, password }),
     });
-    if (!res.ok) throw new Error("Registration failed");
+
+    if (!res.ok) {
+      throw new Error("Registration failed");
+    }
+
     await fetchUser();
   };
 
@@ -91,6 +93,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error("useAuth must be used within AuthProvider");
+  if (!context) {
+    throw new Error("useAuth must be used within AuthProvider");
+  }
   return context;
 };

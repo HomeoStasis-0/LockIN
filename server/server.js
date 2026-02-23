@@ -35,6 +35,9 @@ app.get("/api", async (req, res) => {
   }
 });
 
+// ######### Authentication routes #########
+// #########################################
+
 // JWT helper
 const generateToken = (user) => {
   return jwt.sign(
@@ -158,6 +161,103 @@ app.get("/auth/me", authenticate, async (req, res) => {
 app.post("/auth/logout", (req, res) => {
   res.clearCookie("token");
   res.json({ message: "Logged out" });
+});
+
+// #########################################
+// #########################################
+
+// ######### Deck and card routes ##########
+// #########################################
+
+// Get user decks
+app.get("/api/decks", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM deck
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.user_id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch decks" });
+  }
+});
+
+// Create new deck
+app.post("/api/decks", authenticate, async (req, res) => {
+  const { deck_name, subject, course_number, instructor } = req.body;
+
+  if (!deck_name) {
+    return res.status(400).json({ error: "Deck name required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO deck (user_id, deck_name, subject, course_number, instructor)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [
+        req.user.user_id,
+        deck_name,
+        subject,
+        course_number,
+        instructor,
+      ]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create deck" });
+  }
+});
+
+// Get cards in deck
+app.get("/api/decks/:deckId/cards", authenticate, async (req, res) => {
+  const { deckId } = req.params;
+
+  try {
+    const result = await pool.query(
+      `SELECT *
+       FROM card
+       WHERE deck_id = $1
+       ORDER BY created_at ASC`,
+      [deckId]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch cards" });
+  }
+});
+
+// Add card manually
+app.post("/api/decks/:deckId/cards", authenticate, async (req, res) => {
+  const { deckId } = req.params;
+  const { card_front, card_back } = req.body;
+
+  if (!card_front || !card_back) {
+    return res.status(400).json({ error: "Front and back required" });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO card (deck_id, card_front, card_back)
+       VALUES ($1, $2, $3)
+       RETURNING *`,
+      [deckId, card_front, card_back]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to add card" });
+  }
 });
 
 app.listen(8080, () => {
