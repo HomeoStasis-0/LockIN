@@ -53,3 +53,6 @@ Thumbs.db
 
 # Misc
 *.log
+
+# Vite
+.vite/
