@@ -53,6 +53,12 @@ Thumbs.db
 
 # Misc
 *.log
+secrets.txt
+.env
+
+# Uploads (temp PDFs)
+uploads/
+
 
 # Vite
 .vite/
