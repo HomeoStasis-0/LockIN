@@ -1,21 +1,24 @@
 import { useMemo, useState } from "react";
-import type { Card } from "../Types";
+import type { CardRow } from "../Types";
 import { styles } from "../Styles";
-import CardRow from "../Components/CardRow";
+import CardRowView from "../Components/CardRow";
 
 export default function LearnView(props: {
-  cards: Card[];
-  onEdit: (c: Card) => void;
-  onRemove: (id: string) => void;
-  onToggleReviewPile: (id: string) => void;
+  cards: CardRow[];
+  onEdit: (c: CardRow) => void;
+  onRemove: (id: number) => void;
+  onToggleReviewPile: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return props.cards;
+
     return props.cards.filter(
-      (c) => c.front.toLowerCase().includes(q) || c.back.toLowerCase().includes(q)
+      (c) =>
+        c.card_front.toLowerCase().includes(q) ||
+        c.card_back.toLowerCase().includes(q)
     );
   }, [props.cards, query]);
 
@@ -33,7 +36,7 @@ export default function LearnView(props: {
 
       <div style={styles.cardGrid}>
         {filtered.map((c) => (
-          <CardRow
+          <CardRowView
             key={c.id}
             card={c}
             onEdit={props.onEdit}
@@ -45,7 +48,7 @@ export default function LearnView(props: {
       </div>
 
       <div style={styles.tip}>
-        Tip: toggling “Review pile” matches your sketch’s add/remove behavior.
+        Review pile is currently derived from whether <code>due_date</code> is null or not.
       </div>
     </section>
   );
