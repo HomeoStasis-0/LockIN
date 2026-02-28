@@ -29,7 +29,7 @@ function computeDueAt(intervalDays: number) {
   return now() + ms;
 }
 
-export default function DeckUI() {
+export default function DeckUI({ onBack }: { onBack?: () => void } = {}) {
   const [deck, setDeck] = useState<Deck>(() => ({
     id: "deck_" + uid(),
     name: "CSCE 120",
@@ -118,7 +118,26 @@ export default function DeckUI() {
     <div style={styles.page}>
       <header style={styles.header}>
         <div>
-          <div style={styles.deckTitle}>{deck.name}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            {onBack ? (
+              <button
+                onClick={onBack}
+                aria-label="Back"
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: 20,
+                  padding: 4,
+                }}
+              >
+                ←
+              </button>
+            ) : null}
+
+            <div style={styles.deckTitle}>{deck.name}</div>
+          </div>
+
           <div style={styles.deckMeta}>
             {deck.subject ? <span>{deck.subject}</span> : null}
             {deck.subject && deck.course ? <span style={{ opacity: 0.6 }}> · </span> : null}
