@@ -174,15 +174,20 @@ if (process.env.NODE_ENV === "production") {
 
 const PORT = process.env.PORT || 8080;
 
-const serverInstance = app.listen(PORT, () => {
-  console.log(`Server started on port ${PORT}`);
-});
+// Export `app` for testing. Start the server only when run directly.
+if (require.main === module) {
+  const serverInstance = app.listen(PORT, () => {
+    console.log(`Server started on port ${PORT}`);
+  });
 
-serverInstance.on("error", (err) => {
-  if (err && err.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} in use. Set PORT env var or stop the other process.`);
-    process.exit(1);
-  } else {
-    console.error(err);
-  }
-});
+  serverInstance.on("error", (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} in use. Set PORT env var or stop the other process.`);
+      process.exit(1);
+    } else {
+      console.error(err);
+    }
+  });
+}
+
+module.exports = app;
