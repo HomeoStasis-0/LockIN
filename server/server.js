@@ -1,8 +1,9 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
 const { Pool } = require("pg");
-require("dotenv").config(); // for .env variables
-const bcrypt = require("bcryptjs"); // for password_hash
+require("dotenv").config();
+const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 
@@ -17,11 +18,12 @@ app.use(cors(corsOptions));
 app.use(express.json());
 app.use(cookieParser());
 
+// NOTE: production static serving moved to after API routes so API endpoints work
+
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: {
-      rejectUnauthorized: false,
-    },
+  connectionString: process.env.DATABASE_URL,
+  // Only enable SSL in production (many local Postgres setups don't support SSL)
+  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
 });
 
 // Test route using database
@@ -160,6 +162,32 @@ app.post("/auth/logout", (req, res) => {
   res.json({ message: "Logged out" });
 });
 
-app.listen(8080, () => {
-  console.log("Server started on port 8080");
-});
+// Serve client build in production (registered after API routes so they take precedence)
+if (process.env.NODE_ENV === "production") {
+  const clientDist = path.join(__dirname, "..", "client", "dist");
+  app.use(express.static(clientDist));
+
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(clientDist, "index.html"));
+  });
+}
+
+const PORT = process.env.PORT || 8080;
+
+// Export `app` for testing. Start the server only when run directly.
+if (require.main === module) {
+  const serverInstance = app.listen(PORT, () => {
+    console.log(`Server started on port ${PORT}`);
+  });
+
+  serverInstance.on("error", (err) => {
+    if (err && err.code === "EADDRINUSE") {
+      console.error(`Port ${PORT} in use. Set PORT env var or stop the other process.`);
+      process.exit(1);
+    } else {
+      console.error(err);
+    }
+  });
+}
+
+module.exports = app;
