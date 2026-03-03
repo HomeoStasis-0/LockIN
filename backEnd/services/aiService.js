@@ -4,7 +4,7 @@
  */
 const path = require('path');
 const fs = require('fs').promises;
-const { generateFromPdf } = require('../ai_client');
+const { generateFromPdf } = require('./ai_client');
 
 /**
  * Generate flashcards and quiz from an uploaded PDF file.
@@ -22,3 +22,12 @@ async function generateStudyMaterialsFromPdf(pdfPath) {
 }
 
 module.exports = { generateStudyMaterialsFromPdf };
+
+
+//test generateStudyMaterialsFromPdf
+const pdfPath = path.join(__dirname, 'test.pdf');
+generateStudyMaterialsFromPdf(pdfPath).then(data => {
+  console.log(data);
+}).catch(err => {
+  console.error(err);
+});

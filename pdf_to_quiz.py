@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import pdfplumber
 from groq import Groq
@@ -17,7 +18,7 @@ def extract_text_from_pdf(pdf_path):
     """
     Parses PDF/images into texts using pdfplumber[cite: 42, 51].
     """
-    print(f"Extracting text from {pdf_path}...")
+    print(f"Extracting text from {pdf_path}...", file=sys.stderr)
     full_text = ""
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -27,11 +28,11 @@ def extract_text_from_pdf(pdf_path):
                     full_text += text + "\n"
         return full_text
     except Exception as e:
-        print(f"Error reading PDF: {e}")
+        print(f"Error reading PDF: {e}", file=sys.stderr)
         return None
 
 def generate_study_material(context_text):
-    print("Generating study materials via Groq Structured Outputs...")
+    print("Generating study materials via Groq Structured Outputs...", file=sys.stderr)
 
     # Define the JSON Schema
     study_material_schema = {
@@ -94,7 +95,7 @@ def generate_study_material(context_text):
         return chat_completion.choices[0].message.content
 
     except Exception as e:
-        print(f"Error calling Groq API: {e}")
+        print(f"Error calling Groq API: {e}", file=sys.stderr)
         return None
 
 def run_pipeline(pdf_path):
@@ -110,7 +111,9 @@ def run_pipeline(pdf_path):
 
 
 def main():
-    import sys
+    # Ensure stdout uses UTF-8 (fixes UnicodeEncodeError on Windows CP1252)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     if len(sys.argv) < 2:
         print("Usage: python pdf_to_quiz.py <path_to_pdf>", file=sys.stderr)
         sys.exit(1)

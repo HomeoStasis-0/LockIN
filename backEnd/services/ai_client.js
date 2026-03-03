@@ -10,7 +10,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 
 /** Path to pdf_to_quiz.py (project root) */
-const PDF_TO_QUIZ_PATH = path.join(__dirname, '..', 'pdf_to_quiz.py');
+const PDF_TO_QUIZ_PATH = path.join(__dirname, '..', '..', 'pdf_to_quiz.py');
 
 /**
  * Generate study materials (flashcards + quiz) from a PDF file.
@@ -23,7 +23,7 @@ async function generateFromPdf(pdfPath) {
   return new Promise((resolve, reject) => {
     const py = spawn('python', [PDF_TO_QUIZ_PATH, pdfPath], {
       cwd: path.dirname(PDF_TO_QUIZ_PATH),
-      env: { ...process.env },
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
 
     let stdout = '';
@@ -56,3 +56,12 @@ async function generateFromPdf(pdfPath) {
 }
 
 module.exports = { generateFromPdf };
+
+
+// test generateFromPdf
+const pdfPath = path.join(__dirname, 'test.pdf');
+generateFromPdf(pdfPath).then(data => {
+  console.log(data);
+}).catch(err => {
+  console.error(err);
+});
