@@ -1,1 +1,0 @@
-This folder contains the root directory for the server/backend

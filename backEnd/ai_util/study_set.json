@@ -1,0 +1,28 @@
+{
+  "flashcards": [
+    {"front":"What does u.status represent in BFS?","back":"Whether node u is undiscovered, discovered, or explored."},
+    {"front":"What is the initial distance (u.dist) for nodes other than the source in BFS?","back":"Infinity (∞)."},
+    {"front":"What data structure does BFS use to manage nodes?","back":"A queue (FIFO)."},
+    {"front":"What is a predecessor tree in BFS?","back":"A subgraph containing the source and all nodes with non‑NIL parent, with edges from each parent to its child."},
+    {"front":"What is the runtime of BFS on an undirected graph stored as an adjacency list?","back":"O(n + m) where n = |V| and m = |E|."},
+    {"front":"What does u.parent represent in DFS?","back":"The predecessor (discoverer) of node u."},
+    {"front":"What timestamps are recorded for each node in DFS?","back":"Discovery time D and finishing time F."},
+    {"front":"What is the runtime of DFS on a graph stored as an adjacency list?","back":"O(|V| + |E|)."},
+    {"front":"How are edges classified in DFS?","back":"Tree, back, forward, and cross edges."},
+    {"front":"Define a weakly connected component in a directed graph.","back":"A connected component of the underlying undirected graph obtained by ignoring edge directions."},
+    {"front":"Define a strongly connected component in a directed graph.","back":"A maximal set of vertices where each vertex is reachable from every other vertex via directed paths."},
+    {"front":"What is a topological ordering of a DAG?","back":"An ordering of vertices such that for every edge (u,v), u appears before v."}
+  ],
+  "quiz": [
+    {
+      "question":"Using aggregate analysis, what is the overall runtime of the BFS method?",
+      "options":["O(n)","O(m+n)","O(n^2)","O(mn)"],
+      "correct_answer":"O(m+n)"
+    },
+    {
+      "question":"What is the runtime of a depth first search, assuming adjacency list representation and |E| = Ω(|V|)?",
+      "options":["O(|V|)","O(|E|)","O(|V|×|E|)","O(|V|^2)","O(|E|^2)"],
+      "correct_answer":"O(|E|)"
+    }
+  ]
+}
