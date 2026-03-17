@@ -344,3 +344,47 @@ app.delete("/api/cards/:id", async (req, res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
+app.get("/api/decks", authenticate, async (req, res) => {
+  try {
+    const q = await pool.query(
+      `SELECT id, user_id, deck_name, subject, course_number, instructor, created_at
+       FROM deck
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [req.user.user_id]
+    );
+    res.json(q.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.post("/api/decks", authenticate, async (req, res) => {
+  const { deck_name, subject, course_number, instructor } = req.body ?? {};
+
+  if (!deck_name || typeof deck_name !== "string") {
+    return res.status(400).json({ error: "deck_name is required" });
+  }
+
+  try {
+    const q = await pool.query(
+      `INSERT INTO deck (user_id, deck_name, subject, course_number, instructor)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at`,
+      [
+        req.user.user_id,
+        deck_name,
+        subject ?? null,
+        course_number ?? null,
+        instructor ?? null,
+      ]
+    );
+
+    res.status(201).json(q.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
