@@ -6,6 +6,7 @@ require("dotenv").config();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
+const { updateCardDb } = require("../backEnd/spaced_repetition");
 
 const app = express();
 
@@ -19,11 +20,9 @@ app.use(express.json());
 app.use(cookieParser());
 
 // NOTE: production static serving moved to after API routes so API endpoints work
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Only enable SSL in production (many local Postgres setups don't support SSL)
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false },
 });
 
 // Test route using database
@@ -162,32 +161,186 @@ app.post("/auth/logout", (req, res) => {
   res.json({ message: "Logged out" });
 });
 
-// Serve client build in production (registered after API routes so they take precedence)
-if (process.env.NODE_ENV === "production") {
-  const clientDist = path.join(__dirname, "..", "client", "dist");
-  app.use(express.static(clientDist));
+app.listen(8080, () => {
+  console.log("Server started on port 8080");
+});
 
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(clientDist, "index.html"));
-  });
+app.get("/api/decks/:id", async (req, res) => {
+  const deckId = Number(req.params.id);
+  if (!Number.isFinite(deckId)) return res.status(400).json({ error: "Invalid deck id" });
+
+  try {
+    const deckQ = await pool.query(
+      `SELECT id, user_id, deck_name, subject, course_number, instructor, created_at
+       FROM deck
+       WHERE id = $1`,
+      [deckId]
+    );
+
+    if (deckQ.rowCount === 0) return res.status(404).json({ error: "Deck not found" });
+
+    const cardsQ = await pool.query(
+      `SELECT id, deck_id, card_front, card_back, created_at,
+              ease_factor, interval_days, repetitions, due_date, last_reviewed
+       FROM card
+       WHERE deck_id = $1
+       ORDER BY created_at DESC`,
+      [deckId]
+    );
+
+    res.json({ deck: deckQ.rows[0], cards: cardsQ.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.post("/api/cards", async (req, res) => {
+  const { deck_id, card_front, card_back } = req.body ?? {};
+  if (!deck_id || !card_front || !card_back) {
+    return res.status(400).json({ error: "deck_id, card_front, card_back required" });
+  }
+
+  try {
+    const q = await pool.query(
+      `INSERT INTO card (
+         deck_id, card_front, card_back, created_at,
+         ease_factor, interval_days, repetitions, due_date, last_reviewed
+       )
+       VALUES ($1, $2, $3, now(), 2.5, 0, 0, now(), null)
+       RETURNING id, deck_id, card_front, card_back, created_at,
+                 ease_factor, interval_days, repetitions, due_date, last_reviewed`,
+      [Number(deck_id), card_front, card_back]
+    );
+
+    res.status(201).json(q.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.patch("/api/cards/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const c = req.body ?? {};
+
+  try {
+    const q = await pool.query(
+      `UPDATE card
+       SET card_front = $1,
+           card_back = $2,
+           ease_factor = $3,
+           interval_days = $4,
+           repetitions = $5,
+           due_date = $6,
+           last_reviewed = $7
+       WHERE id = $8
+       RETURNING id, deck_id, card_front, card_back, created_at,
+                 ease_factor, interval_days, repetitions, due_date, last_reviewed`,
+      [
+        c.card_front,
+        c.card_back,
+        c.ease_factor,
+        c.interval_days,
+        c.repetitions,
+        c.due_date,
+        c.last_reviewed,
+        id,
+      ]
+    );
+
+    if (q.rowCount === 0) return res.status(404).json({ error: "Card not found" });
+    res.json(q.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+function ratingToQuality(rating) {
+  // map your UI buttons to SM-2 quality 0..5
+  switch (rating) {
+    case "again": return 1; // fail
+    case "hard":  return 3;
+    case "good":  return 4;
+    case "easy":  return 5;
+    default:      return null;
+  }
 }
 
-const PORT = process.env.PORT || 8080;
+app.post("/api/cards/:id/rate", async (req, res) => {
+  const id = Number(req.params.id);
+  const rating = req.body?.rating;
 
-// Export `app` for testing. Start the server only when run directly.
-if (require.main === module) {
-  const serverInstance = app.listen(PORT, () => {
-    console.log(`Server started on port ${PORT}`);
-  });
+  const quality = ratingToQuality(rating);
+  if (!Number.isFinite(id) || quality === null) {
+    return res.status(400).json({ error: "Invalid card id or rating" });
+  }
 
-  serverInstance.on("error", (err) => {
-    if (err && err.code === "EADDRINUSE") {
-      console.error(`Port ${PORT} in use. Set PORT env var or stop the other process.`);
-      process.exit(1);
-    } else {
-      console.error(err);
-    }
-  });
-}
+  try {
+    // updateCardDb updates the DB; we then return the updated full card row
+    await updateCardDb(pool, id, quality);
 
-module.exports = app;
+    const updated = await pool.query(
+      `SELECT id, deck_id, card_front, card_back, created_at,
+              ease_factor, interval_days, repetitions, due_date, last_reviewed
+       FROM card
+       WHERE id = $1`,
+      [id]
+    );
+
+    res.json(updated.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.patch("/api/cards/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const c = req.body ?? {};
+
+  try {
+    const q = await pool.query(
+      `UPDATE card
+       SET card_front = $1,
+           card_back = $2,
+           ease_factor = $3,
+           interval_days = $4,
+           repetitions = $5,
+           due_date = $6,
+           last_reviewed = $7
+       WHERE id = $8
+       RETURNING id, deck_id, card_front, card_back, created_at,
+                 ease_factor, interval_days, repetitions, due_date, last_reviewed`,
+      [
+        c.card_front,
+        c.card_back,
+        c.ease_factor,
+        c.interval_days,
+        c.repetitions,
+        c.due_date,
+        c.last_reviewed,
+        id,
+      ]
+    );
+
+    if (q.rowCount === 0) return res.status(404).json({ error: "Card not found" });
+    res.json(q.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.delete("/api/cards/:id", async (req, res) => {
+  const id = Number(req.params.id);
+
+  try {
+    await pool.query(`DELETE FROM card WHERE id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});

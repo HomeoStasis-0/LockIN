@@ -1,11 +1,13 @@
+import type { ReactNode } from "react";
 import { styles } from "../Styles";
+
 export default function TabButton({
   active,
   children,
   onClick,
 }: {
   active: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
   onClick: () => void;
 }) {
   return (
