@@ -1,40 +1,143 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import type { DeckRow } from "../../../frontEnd/src/CardDeck/Types"; // probably should move this type to a more shared location
+
+
+type CreateDeckBody = {
+  deck_name: string;
+  subject: string | null;
+  course_number: number | null;
+  instructor: string | null;
+};
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    credentials: "include", // IMPORTANT for your cookie auth
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+
+  return text ? (JSON.parse(text) as T) : (null as T);
+}
+
+// pg sometimes returns ids as strings depending on setup; normalize to match DB-first types
+function normalizeDeck(d: any): DeckRow {
+  return {
+    ...d,
+    id: Number(d.id),
+    user_id: Number(d.user_id),
+    course_number: d.course_number == null ? null : Number(d.course_number),
+  };
+}
+
+function parseCourseNumber(courseId: string): number | null {
+  const m = courseId.match(/(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+function parseSubject(courseId: string): string | null {
+  const m = courseId.match(/^([A-Za-z]+)/);
+  return m ? m[1].toUpperCase() : null;
+}
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { user, logout, loading } = useAuth();
   const navigate = useNavigate();
 
-  const { loading } = useAuth();
-
+  // redirect if not logged in
   useEffect(() => {
     if (!loading && !user) navigate("/login");
-  }, [user, loading]);
+  }, [user, loading, navigate]);
 
-  if (!user) return null; // Loading or redirecting
-
-  const [courses, setCourses] = useState(
-    () => [
-      { id: "CSCE120", title: "CSCE 120 — Data Structures" }
-    ] as { id: string; title: string }[]
-  );
+  const [decks, setDecks] = useState<DeckRow[]>([]);
+  const [decksLoading, setDecksLoading] = useState(false);
+  const [decksError, setDecksError] = useState<string | null>(null);
 
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newId, setNewId] = useState("");
+  const [newId, setNewId] = useState(""); // e.g. CSCE120
 
-  function addCourse() {
+  // load decks once user is known
+  useEffect(() => {
+    if (!user) return;
+
+    let cancelled = false;
+
+    async function loadDecks() {
+      try {
+        setDecksLoading(true);
+        setDecksError(null);
+
+        const data = await api<any[]>(`/api/decks`);
+        const normalized = (data ?? []).map(normalizeDeck);
+
+        if (!cancelled) setDecks(normalized);
+      } catch (e) {
+        if (!cancelled) setDecksError(e instanceof Error ? e.message : "Failed to load decks");
+      } finally {
+        if (!cancelled) setDecksLoading(false);
+      }
+    }
+
+    loadDecks();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const canCreate = useMemo(() => newId.trim() && newTitle.trim(), [newId, newTitle]);
+
+  async function addCourse() {
+    if (!user) return;
     if (!newId.trim() || !newTitle.trim()) return;
-    setCourses((s) => [...s, { id: newId.trim(), title: newTitle.trim() }]);
-    setNewId("");
-    setNewTitle("");
-    setAdding(false);
+
+    const body: CreateDeckBody = {
+      deck_name: newTitle.trim(),
+      subject: parseSubject(newId.trim()),
+      course_number: parseCourseNumber(newId.trim()),
+      instructor: null,
+    };
+
+    try {
+      const created = normalizeDeck(
+        await api<any>(`/api/decks`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        })
+      );
+
+      setDecks((prev) => [created, ...prev]);
+      setNewId("");
+      setNewTitle("");
+      setAdding(false);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to create deck");
+    }
   }
+
+  if (!user) return null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#f8fafc", padding: 24 }}>
-      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 960, margin: "0 auto" }}>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          maxWidth: 960,
+          margin: "0 auto",
+        }}
+      >
         <div>
           <button
             onClick={async () => {
@@ -51,15 +154,14 @@ export default function Dashboard() {
         </div>
 
         <div style={{ textAlign: "center" }}>
-          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800 }}>Welcome, {user.username}!</h1>
+          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800 }}>
+            Welcome, {user.username}!
+          </h1>
           <div style={{ color: "#6b7280" }}>{user.email}</div>
         </div>
 
         <div style={{ width: 120, textAlign: "right" }}>
-          <button
-            onClick={() => setAdding((a) => !a)}
-            className="px-4 py-2 bg-white border rounded"
-          >
+          <button onClick={() => setAdding((a) => !a)} className="px-4 py-2 bg-white border rounded">
             {adding ? "Cancel" : "Add Course"}
           </button>
         </div>
@@ -69,13 +171,29 @@ export default function Dashboard() {
         {adding ? (
           <div style={{ marginBottom: 12, padding: 12, background: "white", borderRadius: 8 }}>
             <div style={{ marginBottom: 8 }}>
-              <input placeholder="Course ID (e.g. CSCE120)" value={newId} onChange={(e) => setNewId(e.target.value)} style={{ padding: 8, width: "100%", boxSizing: "border-box" }} />
+              <input
+                placeholder="Course ID (e.g. CSCE120)"
+                value={newId}
+                onChange={(e) => setNewId(e.target.value)}
+                style={{ padding: 8, width: "100%", boxSizing: "border-box" }}
+              />
             </div>
             <div style={{ marginBottom: 8 }}>
-              <input placeholder="Course Title" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} style={{ padding: 8, width: "100%", boxSizing: "border-box" }} />
+              <input
+                placeholder="Course Title"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                style={{ padding: 8, width: "100%", boxSizing: "border-box" }}
+              />
             </div>
             <div>
-              <button onClick={addCourse} className="px-4 py-2 bg-indigo-600 text-white rounded">Create</button>
+              <button
+                onClick={addCourse}
+                disabled={!canCreate}
+                className="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50"
+              >
+                Create
+              </button>
             </div>
           </div>
         ) : null}
@@ -83,12 +201,33 @@ export default function Dashboard() {
         <section>
           <h2 style={{ fontSize: 20, marginBottom: 12, fontWeight: 800 }}>Your Courses</h2>
 
+          {decksLoading ? <div>Loading decks…</div> : null}
+          {decksError ? <div style={{ color: "crimson" }}>{decksError}</div> : null}
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
-            {courses.map((c) => (
-              <div key={c.id} style={{ padding: 16, borderRadius: 12, background: "white", boxShadow: "0 0 0 1px #e5e7eb inset" }}>
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>{c.title}</div>
+            {decks.map((d) => (
+              <div
+                key={d.id}
+                style={{
+                  padding: 16,
+                  borderRadius: 12,
+                  background: "white",
+                  boxShadow: "0 0 0 1px #e5e7eb inset",
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>{d.deck_name}</div>
+                <div style={{ color: "#6b7280", marginBottom: 10 }}>
+                  {d.subject ?? "—"}
+                  {d.course_number != null ? ` · ${d.course_number}` : ""}
+                </div>
+
                 <div style={{ display: "flex", gap: 8 }}>
-                  <Link to={`/courses/${c.id}`} className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition">Open</Link>
+                  <Link
+                    to={`/courses/${d.id}`}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+                  >
+                    Open
+                  </Link>
                 </div>
               </div>
             ))}

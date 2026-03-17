@@ -20,7 +20,8 @@ function isDue(card: CardRow) {
   return card.due_date !== null && new Date(card.due_date).getTime() <= Date.now();
 }
 
-export default function DeckUI() {
+export default function DeckUI({ deckId }: { deckId: number }) {
+
   const [deck, setDeck] = useState<DeckWithCards | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -33,7 +34,13 @@ export default function DeckUI() {
       try {
         setLoading(true);
         setError(null);
-        const data = await getDeckWithCards(1); // hardcoded for now, can add deck selection later
+
+        if (!Number.isFinite(deckId)) {
+          console.log("Invalid deck id in URL:", deckId);
+          throw new Error("Invalid deck id in URL");
+        }
+
+        const data = await getDeckWithCards(deckId);
         if (!cancelled) setDeck(data);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load deck");
@@ -46,7 +53,7 @@ export default function DeckUI() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [deckId]);
 
   const cards = deck?.cards ?? [];
   const stats = useMemo(() => {
@@ -107,9 +114,7 @@ export default function DeckUI() {
           <div style={styles.deckTitle}>{deck.deck_name}</div>
           <div style={styles.deckMeta}>
             {deck.subject ? <span>{deck.subject}</span> : null}
-            {deck.subject && deck.course_number != null ? (
-              <span style={{ opacity: 0.6 }}> · </span>
-            ) : null}
+            {deck.subject && deck.course_number != null ? <span style={{ opacity: 0.6 }}> · </span> : null}
             {deck.course_number != null ? <span>CSCE {deck.course_number}</span> : null}
             {deck.instructor ? <span style={{ opacity: 0.6 }}> · {deck.instructor}</span> : null}
           </div>
@@ -123,15 +128,9 @@ export default function DeckUI() {
       </header>
 
       <nav style={styles.tabs}>
-        <TabButton active={tab === "learn"} onClick={() => setTab("learn")}>
-          Learn
-        </TabButton>
-        <TabButton active={tab === "review"} onClick={() => setTab("review")}>
-          Review ({stats.due})
-        </TabButton>
-        <TabButton active={tab === "add"} onClick={() => setTab("add")}>
-          Add
-        </TabButton>
+        <TabButton active={tab === "learn"} onClick={() => setTab("learn")}>Learn</TabButton>
+        <TabButton active={tab === "review"} onClick={() => setTab("review")}>Review ({stats.due})</TabButton>
+        <TabButton active={tab === "add"} onClick={() => setTab("add")}>Add</TabButton>
       </nav>
 
       <main style={styles.main}>

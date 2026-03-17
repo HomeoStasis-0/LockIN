@@ -23,7 +23,8 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/cards" element={user ? <DeckUI /> : <Navigate to="/login" replace />} />
+      // what's this for?
+      <Route path="/cards/" element={user ? <DeckUI deckId={1}/> : <Navigate to="/login" replace />} />
       <Route path="/courses/:id" element={user ? <CourseView /> : <Navigate to="/login" replace />} />
     </Routes>
   );
