@@ -19,11 +19,9 @@ app.use(express.json());
 app.use(cookieParser());
 
 // NOTE: production static serving moved to after API routes so API endpoints work
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Only enable SSL in production (many local Postgres setups don't support SSL)
-  ssl: process.env.NODE_ENV === "production" ? { rejectUnauthorized: false } : false,
+  ssl: { rejectUnauthorized: false },
 });
 
 // Test route using database
