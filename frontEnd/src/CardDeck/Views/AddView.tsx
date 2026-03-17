@@ -1,24 +1,20 @@
 import { useRef, useState } from "react";
-import type { CardRow } from "../Types";
 import { styles } from "../Styles";
 
 export default function AddView(props: {
   deckId: number;
-  makeCard: (front: string, back: string) => CardRow;
-  onCreate: (c: CardRow) => void;
+  onCreate: (front: string, back: string) => Promise<void> | void;
 }) {
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  function submit() {
+  async function submit() {
     const f = front.trim();
     const b = back.trim();
     if (!f || !b) return;
 
-    const card = props.makeCard(f, b);
-    props.onCreate(card);
-
+    await props.onCreate(f, b);
     setFront("");
     setBack("");
   }
