@@ -1,169 +1,111 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { styles } from "./Styles";
 import type { CardRow, DeckWithCards } from "./Types";
 import LearnView from "./Views/LearnView";
 import ReviewView from "./Views/ReviewView";
 import AddView from "./Views/AddView";
 import TabButton from "./Components/TabButton";
-
-function clamp(n: number, lo: number, hi: number) {
-  return Math.max(lo, Math.min(hi, n));
-}
-
-function computeNextInterval(
-  currentDays: number,
-  rating: "again" | "hard" | "good" | "easy"
-): number {
-  // simple + predictable for now; can swap to SM-2 later
-  if (rating === "again") return 0;
-  if (rating === "hard") return clamp(Math.max(1, Math.round(currentDays * 1.2)), 1, 365);
-  if (rating === "good") return clamp(Math.max(2, Math.round(currentDays * 2)), 2, 365);
-  return clamp(Math.max(4, Math.round(currentDays * 3)), 4, 365);
-}
-
-function toIsoNow() {
-  return new Date().toISOString();
-}
-
-function toIsoFromNow(intervalDays: number) {
-  const ms = intervalDays * 24 * 60 * 60 * 1000;
-  return new Date(Date.now() + ms).toISOString();
-}
+import {
+  getDeckWithCards,
+  createCard,
+  updateCard,
+  deleteCard,
+  rateCard as apiRateCard,
+} from "./API/DeckAPI";
 
 function isInReviewPile(card: CardRow) {
   return card.due_date !== null;
 }
-
 function isDue(card: CardRow) {
   return card.due_date !== null && new Date(card.due_date).getTime() <= Date.now();
 }
 
-export default function DeckUI() {
-  // Temporary local IDs for new cards before backend exists
-  const [nextTempCardId, setNextTempCardId] = useState(-1);
+export default function DeckUI({ deckId }: { deckId: number }) {
 
-  const [deck, setDeck] = useState<DeckWithCards>(() => ({
-    id: 1,
-    user_id: 1,
-    deck_name: "CSCE 120",
-    subject: "Data Structures",
-    course_number: 120,
-    instructor: "",
-    created_at: toIsoNow(),
-    cards: [
-      {
-        id: 1,
-        deck_id: 1,
-        card_front: "What is a pointer?",
-        card_back: "A pointer stores the memory address of another value.",
-        created_at: toIsoNow(),
-        ease_factor: 2.5,
-        interval_days: 0,
-        repetitions: 0,
-        due_date: toIsoNow(), // in review + due now
-        last_reviewed: null,
-      },
-      {
-        id: 2,
-        deck_id: 1,
-        card_front: "Stack vs Heap?",
-        card_back: "Stack: automatic storage (LIFO frames). Heap: dynamic allocation, manual/free/GC.",
-        created_at: toIsoNow(),
-        ease_factor: 2.5,
-        interval_days: 0,
-        repetitions: 0,
-        due_date: null, // not in review pile
-        last_reviewed: null,
-      },
-    ],
-  }));
-
+  const [deck, setDeck] = useState<DeckWithCards | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"learn" | "review" | "add">("learn");
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        setLoading(true);
+        setError(null);
+
+        if (!Number.isFinite(deckId)) {
+          console.log("Invalid deck id in URL:", deckId);
+          throw new Error("Invalid deck id in URL");
+        }
+
+        const data = await getDeckWithCards(deckId);
+        if (!cancelled) setDeck(data);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load deck");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [deckId]);
+
+  const cards = deck?.cards ?? [];
   const stats = useMemo(() => {
-    const total = deck.cards.length;
-    const inReview = deck.cards.filter(isInReviewPile).length;
-    const due = deck.cards.filter(isDue).length;
+    const total = cards.length;
+    const inReview = cards.filter(isInReviewPile).length;
+    const due = cards.filter(isDue).length;
     return { total, inReview, due };
-  }, [deck.cards]);
+  }, [cards]);
 
-  function upsertCard(card: CardRow) {
-    setDeck((d) => ({
-      ...d,
-      cards: d.cards.some((c) => c.id === card.id)
-        ? d.cards.map((c) => (c.id === card.id ? card : c))
-        : [card, ...d.cards],
-    }));
-  }
+  async function handleCreateCard(front: string, back: string) {
+    if (!deck) return;
 
-  function removeCard(id: number) {
-    setDeck((d) => ({ ...d, cards: d.cards.filter((c) => c.id !== id) }));
-  }
-
-  function toggleReviewPile(id: number) {
-    setDeck((d) => ({
-      ...d,
-      cards: d.cards.map((c) => {
-        if (c.id !== id) return c;
-
-        const currentlyInReview = isInReviewPile(c);
-        return {
-          ...c,
-          // If adding to review pile, make due now for immediate practice.
-          // If removing, set due_date null (our DB-truth representation for not in review pile).
-          due_date: currentlyInReview ? null : (c.due_date ?? toIsoNow()),
-        };
-      }),
-    }));
-  }
-
-  function rateCard(id: number, rating: "again" | "hard" | "good" | "easy") {
-    setDeck((d) => ({
-      ...d,
-      cards: d.cards.map((c) => {
-        if (c.id !== id) return c;
-
-        const next = computeNextInterval(c.interval_days, rating);
-        const currentEF = c.ease_factor ?? 2.5;
-
-        const nextEF =
-          rating === "again"
-            ? Math.max(1.3, currentEF - 0.2)
-            : rating === "hard"
-            ? Math.max(1.3, currentEF - 0.05)
-            : rating === "easy"
-            ? currentEF + 0.1
-            : currentEF;
-
-        return {
-          ...c,
-          interval_days: next,
-          due_date: rating === "again" ? toIsoNow() : toIsoFromNow(next),
-          repetitions: c.repetitions + 1,
-          last_reviewed: toIsoNow(),
-          ease_factor: nextEF,
-        };
-      }),
-    }));
-  }
-
-  function createLocalCard(front: string, back: string): CardRow {
-    const id = nextTempCardId;
-    setNextTempCardId((x) => x - 1);
-
-    return {
-      id,
+    const created = await createCard({
       deck_id: deck.id,
       card_front: front,
       card_back: back,
-      created_at: toIsoNow(),
-      ease_factor: 2.5,
-      interval_days: 0,
-      repetitions: 0,
-      due_date: toIsoNow(), // add into review by default (same behavior as before)
-      last_reviewed: null,
-    };
+    });
+
+    setDeck((d) => (d ? { ...d, cards: [created, ...d.cards] } : d));
   }
+
+  async function upsertCard(card: CardRow) {
+    const saved = await updateCard(card);
+    setDeck((d) => (d ? { ...d, cards: d.cards.map((c) => (c.id === saved.id ? saved : c)) } : d));
+  }
+
+  async function removeCard(id: number) {
+    await deleteCard(id);
+    setDeck((d) => (d ? { ...d, cards: d.cards.filter((c) => c.id !== id) } : d));
+  }
+
+  async function toggleReviewPile(id: number) {
+    if (!deck) return;
+    const card = deck.cards.find((c) => c.id === id);
+    if (!card) return;
+
+    const updated: CardRow = {
+      ...card,
+      due_date: card.due_date ? null : new Date().toISOString(),
+    };
+
+    await upsertCard(updated);
+  }
+
+  async function handleRateCard(id: number, rating: "again" | "hard" | "good" | "easy") {
+    const updated = await apiRateCard({ card_id: id, rating });
+    setDeck((d) => (d ? { ...d, cards: d.cards.map((c) => (c.id === updated.id ? updated : c)) } : d));
+  }
+
+  if (loading) return <div style={styles.page}>Loading...</div>;
+  if (error) return <div style={styles.page}>Error: {error}</div>;
+  if (!deck) return <div style={styles.page}>No deck found.</div>;
 
   return (
     <div style={styles.page}>
@@ -172,9 +114,7 @@ export default function DeckUI() {
           <div style={styles.deckTitle}>{deck.deck_name}</div>
           <div style={styles.deckMeta}>
             {deck.subject ? <span>{deck.subject}</span> : null}
-            {deck.subject && deck.course_number != null ? (
-              <span style={{ opacity: 0.6 }}> · </span>
-            ) : null}
+            {deck.subject && deck.course_number != null ? <span style={{ opacity: 0.6 }}> · </span> : null}
             {deck.course_number != null ? <span>CSCE {deck.course_number}</span> : null}
             {deck.instructor ? <span style={{ opacity: 0.6 }}> · {deck.instructor}</span> : null}
           </div>
@@ -188,15 +128,9 @@ export default function DeckUI() {
       </header>
 
       <nav style={styles.tabs}>
-        <TabButton active={tab === "learn"} onClick={() => setTab("learn")}>
-          Learn
-        </TabButton>
-        <TabButton active={tab === "review"} onClick={() => setTab("review")}>
-          Review ({stats.due})
-        </TabButton>
-        <TabButton active={tab === "add"} onClick={() => setTab("add")}>
-          Add
-        </TabButton>
+        <TabButton active={tab === "learn"} onClick={() => setTab("learn")}>Learn</TabButton>
+        <TabButton active={tab === "review"} onClick={() => setTab("review")}>Review ({stats.due})</TabButton>
+        <TabButton active={tab === "add"} onClick={() => setTab("add")}>Add</TabButton>
       </nav>
 
       <main style={styles.main}>
@@ -210,16 +144,10 @@ export default function DeckUI() {
         ) : null}
 
         {tab === "review" ? (
-          <ReviewView cards={deck.cards} onRate={rateCard} onEdit={upsertCard} />
+          <ReviewView cards={deck.cards} onRate={handleRateCard} onEdit={upsertCard} />
         ) : null}
 
-        {tab === "add" ? (
-          <AddView
-            deckId={deck.id}
-            makeCard={createLocalCard}
-            onCreate={upsertCard}
-          />
-        ) : null}
+        {tab === "add" ? <AddView deckId={deck.id} onCreate={handleCreateCard} /> : null}
       </main>
     </div>
   );

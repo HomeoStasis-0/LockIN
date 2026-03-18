@@ -73,9 +73,9 @@ async function updateCardDb(client, cardId, quality, now = null) {
   if (!client || typeof client.query !== 'function') {
     throw new Error('A node-postgres client (with query()) is required for DB updates');
   }
-  const res = await client.query('SELECT ease_factor, repetitions, interval_days FROM "Card" WHERE id = $1', [cardId]);
+  const res = await client.query('SELECT ease_factor, repetitions, interval_days FROM "card" WHERE id = $1', [cardId]);
   if (!res || !res.rows || res.rows.length === 0) {
-    throw new Error(`Card id=${cardId} not found`);
+    throw new Error(`card id=${cardId} not found`);
   }
   const row = res.rows[0];
   const card = { ease_factor: Number(row.ease_factor), repetitions: Number(row.repetitions), interval_days: Number(row.interval_days) };
@@ -83,7 +83,7 @@ async function updateCardDb(client, cardId, quality, now = null) {
   const updates = sm2Update(card, quality, now);
 
   await client.query(
-    'UPDATE "Card" SET ease_factor = $1, repetitions = $2, interval_days = $3, due_date = $4, last_reviewed = $5 WHERE id = $6',
+    'UPDATE "card" SET ease_factor = $1, repetitions = $2, interval_days = $3, due_date = $4, last_reviewed = $5 WHERE id = $6',
     [updates.ease_factor, updates.repetitions, updates.interval_days, updates.due_date, updates.last_reviewed, cardId]
   );
 
