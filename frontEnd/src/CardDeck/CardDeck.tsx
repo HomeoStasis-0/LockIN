@@ -11,6 +11,7 @@ import {
   updateCard,
   deleteCard,
   rateCard as apiRateCard,
+  importPdfToDeck,
 } from "./API/DeckAPI";
 
 function isInReviewPile(card: CardRow) {
@@ -103,6 +104,16 @@ export default function DeckUI({ deckId }: { deckId: number }) {
     setDeck((d) => (d ? { ...d, cards: d.cards.map((c) => (c.id === updated.id ? updated : c)) } : d));
   }
 
+  async function handleImportPdf(file: File) {
+    if (!deck) return { inserted: 0 };
+    const result = await importPdfToDeck(deck.id, file);
+    setDeck((d) => (d ? { ...d, cards: [...result.insertedCards, ...d.cards] } : d));
+    return {
+      inserted: result.flashcards?.inserted ?? result.insertedCards.length,
+      skippedDuplicates: result.flashcards?.skippedDuplicates ?? 0,
+    };
+  }
+
   if (loading) return <div style={styles.page}>Loading...</div>;
   if (error) return <div style={styles.page}>Error: {error}</div>;
   if (!deck) return <div style={styles.page}>No deck found.</div>;
@@ -147,7 +158,13 @@ export default function DeckUI({ deckId }: { deckId: number }) {
           <ReviewView cards={deck.cards} onRate={handleRateCard} onEdit={upsertCard} />
         ) : null}
 
-        {tab === "add" ? <AddView deckId={deck.id} onCreate={handleCreateCard} /> : null}
+        {tab === "add" ? (
+          <AddView
+            deckId={deck.id}
+            onCreate={handleCreateCard}
+            onImportPdf={handleImportPdf}
+          />
+        ) : null}
       </main>
     </div>
   );

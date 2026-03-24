@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CardRow } from "../Types";
 import { styles } from "../Styles";
 
@@ -8,7 +8,7 @@ function isDue(card: CardRow) {
 
 export default function ReviewView(props: {
   cards: CardRow[];
-  onRate: (id: number, rating: "again" | "hard" | "good" | "easy") => void;
+  onRate: (id: number, rating: "again" | "hard" | "good" | "easy") => Promise<void> | void;
   onEdit: (c: CardRow) => void;
 }) {
   const dueCards = useMemo(() => {
@@ -23,15 +23,27 @@ export default function ReviewView(props: {
 
   const [idx, setIdx] = useState(0);
   const [showBack, setShowBack] = useState(false);
+  const [isRating, setIsRating] = useState(false);
+
+  useEffect(() => {
+    setIdx((i) => {
+      if (dueCards.length === 0) return 0;
+      return Math.min(i, dueCards.length - 1);
+    });
+  }, [dueCards.length]);
 
   const current = dueCards[idx] ?? null;
 
-  function next() {
-    setShowBack(false);
-    setIdx((i) => {
-      const n = i + 1;
-      return n >= dueCards.length ? 0 : n;
-    });
+  async function handleRate(rating: "again" | "hard" | "good" | "easy") {
+    if (!current || isRating) return;
+    setIsRating(true);
+    try {
+      await props.onRate(current.id, rating);
+      // Keep index stable; due list refresh will naturally shift to next due card.
+      setShowBack(false);
+    } finally {
+      setIsRating(false);
+    }
   }
 
   if (!current) {
@@ -68,37 +80,29 @@ export default function ReviewView(props: {
           <div style={styles.ratingRow}>
             <button
               style={styles.btn}
-              onClick={() => {
-                props.onRate(current.id, "again");
-                next();
-              }}
+              onClick={() => handleRate("again")}
+              disabled={isRating}
             >
               Again
             </button>
             <button
               style={styles.btn}
-              onClick={() => {
-                props.onRate(current.id, "hard");
-                next();
-              }}
+              onClick={() => handleRate("hard")}
+              disabled={isRating}
             >
               Hard
             </button>
             <button
               style={styles.btn}
-              onClick={() => {
-                props.onRate(current.id, "good");
-                next();
-              }}
+              onClick={() => handleRate("good")}
+              disabled={isRating}
             >
               Good
             </button>
             <button
               style={styles.btn}
-              onClick={() => {
-                props.onRate(current.id, "easy");
-                next();
-              }}
+              onClick={() => handleRate("easy")}
+              disabled={isRating}
             >
               Easy
             </button>

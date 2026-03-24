@@ -36,6 +36,16 @@ export type DeckWithCardsResponse = {
   cards: CardRow[];
 };
 
+export type ImportPdfResponse = {
+  flashcards: { inserted: number; skippedDuplicates?: number };
+  insertedCards: CardRow[];
+  quiz: Array<{
+    question: string;
+    options: string[];
+    correct_answer: string;
+  }>;
+};
+
 export async function getDeckWithCards(deckId: number): Promise<DeckWithCards> {
   const data = await api<any>(`/api/decks/${deckId}`);
 
@@ -95,4 +105,27 @@ export async function rateCard(input: {
     body: JSON.stringify({ rating: input.rating }),
   });
   return normalizeCard(c);
+}
+
+export async function importPdfToDeck(deckId: number, file: File): Promise<ImportPdfResponse> {
+  const data = new FormData();
+  data.append("pdf", file);
+
+  const res = await fetch(`/api/decks/${deckId}/import-pdf`, {
+    method: "POST",
+    credentials: "include",
+    body: data,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("API error", `/api/decks/${deckId}/import-pdf`, res.status, text);
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+
+  const json = (await res.json()) as ImportPdfResponse;
+  return {
+    ...json,
+    insertedCards: (json.insertedCards ?? []).map(normalizeCard),
+  };
 }
