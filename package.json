@@ -19,6 +19,8 @@
     "test:coverage": "jest --runInBand --coverage --forceExit server/__tests__",
     "test": "npm run test:api",
     "client:test": "npx vitest run client/src",
+    "test:all": "npm run test:coverage && npm run client:test",
+    "test:all:e2e": "npm run test:coverage && npm run client:test && npx cypress run",
     "e2e": "npx cypress open"
   },
   "dependencies": {

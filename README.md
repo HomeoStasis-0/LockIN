@@ -31,7 +31,33 @@ Starter CSCE 482 Readme
 
 This project includes three testing layers: server unit/integration tests, frontend unit tests (Vitest), and end-to-end tests (Cypress).
 
-- Run server tests (Jest + Supertest):
+### Run All Tests
+
+**Quick (API + client unit tests + coverage):**
+
+```bash
+npm run test:all
+```
+
+This runs the server tests with line coverage report and then the client unit tests.
+
+**Full suite (API + client unit + coverage + Cypress e2e):**
+
+First, start the dev servers in one terminal:
+
+```bash
+npm run dev
+```
+
+Then in another terminal run:
+
+```bash
+npm run test:all:e2e
+```
+
+### Run Individual Test Suites
+
+**Server tests (Jest + Supertest):**
 
 ```bash
 npm test
@@ -39,34 +65,39 @@ npm test
 npm run test:api
 ```
 
-- Run client/unit tests (Vitest):
+**Server tests with coverage:**
+
+```bash
+npm run test:coverage
+```
+
+**Client/unit tests (Vitest):**
 
 ```bash
 npm run client:test
 ```
 
-- Verify Cypress installation (checks binary availability):
-
-```bash
-npx cypress verify
-```
-
-- Open the Cypress GUI (interactive):
+**Cypress e2e tests (interactive GUI):**
 
 ```bash
 npm run e2e
 ```
 
-- Run Cypress headless (start dev servers first):
+**Cypress headless (requires dev servers running):**
 
-In one terminal start server + client:
+Start servers first:
 
 ```bash
-npm run server:dev   # API on :8080
-npm run client:dev   # Vite dev on :5173
+npm run dev
 ```
 
-Then in another terminal run:
+Then in another terminal:
+
+```bash
+npx cypress run
+```
+
+Or run a specific spec:
 
 ```bash
 npx cypress run --spec "cypress/e2e/login.cy.ts"
