@@ -7,10 +7,29 @@
  */
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 /** Path to pdf_to_quiz.py (project root) */
-const PDF_TO_QUIZ_PATH = path.join(__dirname, '..', 'pdf_to_quiz.py');
+const PDF_TO_QUIZ_PATH = path.join(__dirname, 'ai_util', 'pdf_to_quiz.py');
+
+function resolvePythonBin() {
+  const candidates = [
+    process.env.PYTHON_BIN,
+    '/usr/local/bin/python3',
+    '/opt/homebrew/bin/python3',
+    'python3',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (!candidate.startsWith('/')) return candidate;
+    if (fs.existsSync(candidate)) return candidate;
+  }
+
+  return 'python3';
+}
+
+const PYTHON_BIN = resolvePythonBin();
 
 /**
  * Generate study materials (flashcards + quiz) from a PDF file.
@@ -21,7 +40,7 @@ const PDF_TO_QUIZ_PATH = path.join(__dirname, '..', 'pdf_to_quiz.py');
  */
 async function generateFromPdf(pdfPath) {
   return new Promise((resolve, reject) => {
-    const py = spawn('python', [PDF_TO_QUIZ_PATH, pdfPath], {
+    const py = spawn(PYTHON_BIN, [PDF_TO_QUIZ_PATH, pdfPath], {
       cwd: path.dirname(PDF_TO_QUIZ_PATH),
       env: { ...process.env },
     });

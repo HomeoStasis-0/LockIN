@@ -11,6 +11,11 @@ type CreateDeckBody = {
   instructor: string | null;
 };
 
+type DeleteDeckResponse = {
+  ok: true;
+  deletedDeckId: number;
+};
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     credentials: "include", // IMPORTANT for your cookie auth
@@ -62,6 +67,7 @@ export default function Dashboard() {
   const [decks, setDecks] = useState<DeckRow[]>([]);
   const [decksLoading, setDecksLoading] = useState(false);
   const [decksError, setDecksError] = useState<string | null>(null);
+  const [deletingDeckId, setDeletingDeckId] = useState<number | null>(null);
 
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -122,6 +128,23 @@ export default function Dashboard() {
       setAdding(false);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to create deck");
+    }
+  }
+
+  async function deleteCourse(deckId: number, deckName: string) {
+    const confirmed = window.confirm(`Delete course \"${deckName}\" and all its cards?`);
+    if (!confirmed) return;
+
+    try {
+      setDeletingDeckId(deckId);
+      await api<DeleteDeckResponse>(`/api/decks/${deckId}`, {
+        method: "DELETE",
+      });
+      setDecks((prev) => prev.filter((d) => d.id !== deckId));
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete deck");
+    } finally {
+      setDeletingDeckId(null);
     }
   }
 
@@ -228,6 +251,13 @@ export default function Dashboard() {
                   >
                     Open
                   </Link>
+                  <button
+                    onClick={() => deleteCourse(d.id, d.deck_name)}
+                    disabled={deletingDeckId === d.id}
+                    className="px-4 py-2 bg-white border rounded text-red-600 border-red-300 hover:bg-red-50 transition disabled:opacity-60"
+                  >
+                    {deletingDeckId === d.id ? "Deleting..." : "Delete"}
+                  </button>
                 </div>
               </div>
             ))}

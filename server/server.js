@@ -1,14 +1,98 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const fs = require("fs").promises;
 const { Pool } = require("pg");
 require("dotenv").config();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
+const multer = require("multer");
 const { updateCardDb } = require("../backEnd/spaced_repetition");
+const { generateStudyMaterialsFromPdf } = require("../backEnd/services/aiService");
 
 const app = express();
+
+const uploadDir = path.join(__dirname, "..", "uploads");
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "") || ".pdf";
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    cb(null, `${unique}${ext}`);
+  },
+});
+
+const uploadPdf = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const name = (file.originalname || "").toLowerCase();
+    if (name.endsWith(".pdf")) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("Only PDF files are allowed"));
+  },
+});
+
+function normalizeFlashcards(studySet) {
+  const rawCards = Array.isArray(studySet?.flashcards) ? studySet.flashcards : [];
+  const quiz = Array.isArray(studySet?.quiz) ? studySet.quiz : [];
+
+  const cardsFromFlashcards = rawCards
+    .map((card) => {
+      const front = String(
+        card?.front ?? card?.question ?? card?.term ?? card?.title ?? ""
+      ).trim();
+      const back = String(
+        card?.back ?? card?.answer ?? card?.definition ?? card?.explanation ?? ""
+      ).trim();
+      return { front, back };
+    })
+    .filter((c) => c.front && c.back);
+
+  // If model returns quiz-only output, turn each quiz item into a card.
+  const cardsFromQuiz = quiz
+    .map((q) => {
+      const front = String(q?.question ?? "").trim();
+      const options = Array.isArray(q?.options) ? q.options.filter(Boolean).join(" | ") : "";
+      const answer = String(q?.correct_answer ?? "").trim();
+      const back = [
+        answer ? `Answer: ${answer}` : "",
+        options ? `Options: ${options}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return { front, back };
+    })
+    .filter((c) => c.front && c.back);
+
+  const merged = cardsFromFlashcards.length > 0 ? cardsFromFlashcards : cardsFromQuiz;
+
+  // Deduplicate repeated cards from model output.
+  const seen = new Set();
+  return merged.filter((c) => {
+    const key = `${c.front}__${c.back}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeCardText(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 const corsOptions = {
   origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -161,10 +245,6 @@ app.post("/auth/logout", (req, res) => {
   res.json({ message: "Logged out" });
 });
 
-app.listen(8080, () => {
-  console.log("Server started on port 8080");
-});
-
 app.get("/api/decks/:id", async (req, res) => {
   const deckId = Number(req.params.id);
   if (!Number.isFinite(deckId)) return res.status(400).json({ error: "Invalid deck id" });
@@ -217,6 +297,105 @@ app.post("/api/cards", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) => {
+  const deckId = Number(req.params.id);
+  const file = req.file;
+
+  if (!Number.isFinite(deckId)) {
+    return res.status(400).json({ error: "Invalid deck id" });
+  }
+
+  if (!file || !file.path) {
+    return res.status(400).json({ error: "No PDF file uploaded" });
+  }
+
+  try {
+    const deckQ = await pool.query("SELECT id FROM deck WHERE id = $1", [deckId]);
+    if (deckQ.rowCount === 0) {
+      return res.status(404).json({ error: "Deck not found" });
+    }
+
+    const studySet = await generateStudyMaterialsFromPdf(file.path);
+    const flashcards = normalizeFlashcards(studySet);
+    console.log("PDF import result", {
+      deckId,
+      rawFlashcards: Array.isArray(studySet?.flashcards) ? studySet.flashcards.length : 0,
+      rawQuiz: Array.isArray(studySet?.quiz) ? studySet.quiz.length : 0,
+      normalizedFlashcards: flashcards.length,
+    });
+
+    if (flashcards.length === 0) {
+      return res.status(422).json({
+        error: "No flashcards generated from PDF",
+        quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
+      });
+    }
+
+    const existingQ = await pool.query(
+      `SELECT card_front, card_back
+       FROM card
+       WHERE deck_id = $1`,
+      [deckId]
+    );
+    const existingKeys = new Set(
+      existingQ.rows.map(
+        (r) => `${normalizeCardText(r.card_front)}__${normalizeCardText(r.card_back)}`
+      )
+    );
+
+    const insertedCards = [];
+    let skippedDuplicates = 0;
+    for (const card of flashcards) {
+      const front = String(card.front ?? "").trim();
+      const back = String(card.back ?? "").trim();
+      if (!front || !back) {
+        continue;
+      }
+
+      const dedupeKey = `${normalizeCardText(front)}__${normalizeCardText(back)}`;
+      if (existingKeys.has(dedupeKey)) {
+        skippedDuplicates++;
+        continue;
+      }
+      existingKeys.add(dedupeKey);
+
+      const q = await pool.query(
+        `INSERT INTO card (
+           deck_id, card_front, card_back, created_at,
+           ease_factor, interval_days, repetitions, due_date, last_reviewed
+         )
+         VALUES ($1, $2, $3, now(), 2.5, 0, 0, now(), null)
+         RETURNING id, deck_id, card_front, card_back, created_at,
+                   ease_factor, interval_days, repetitions, due_date, last_reviewed`,
+        [deckId, front, back]
+      );
+      insertedCards.push(q.rows[0]);
+    }
+
+    console.log("PDF import insert summary", {
+      deckId,
+      inserted: insertedCards.length,
+      skippedDuplicates,
+    });
+
+    return res.json({
+      flashcards: { inserted: insertedCards.length, skippedDuplicates },
+      insertedCards,
+      quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({
+      error: "Failed to import PDF",
+      message: err instanceof Error ? err.message : "Unknown error",
+    });
+  } finally {
+    try {
+      await fs.unlink(file.path);
+    } catch (_) {}
   }
 });
 
@@ -388,3 +567,48 @@ app.post("/api/decks", authenticate, async (req, res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
+app.delete("/api/decks/:id", authenticate, async (req, res) => {
+  const deckId = Number(req.params.id);
+  if (!Number.isFinite(deckId)) {
+    return res.status(400).json({ error: "Invalid deck id" });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const ownerQ = await client.query(
+      `SELECT id
+       FROM deck
+       WHERE id = $1 AND user_id = $2`,
+      [deckId, req.user.user_id]
+    );
+
+    if (ownerQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Deck not found" });
+    }
+
+    await client.query(`DELETE FROM card WHERE deck_id = $1`, [deckId]);
+    await client.query(`DELETE FROM deck WHERE id = $1`, [deckId]);
+
+    await client.query("COMMIT");
+    return res.json({ ok: true, deletedDeckId: deckId });
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    console.error(err);
+    return res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
+
+if (require.main === module) {
+  const PORT = process.env.PORT || 8080;
+  app.listen(PORT, () => {
+    console.log(`Server started on port ${PORT}`);
+  });
+}
+
+module.exports = app;
