@@ -16,6 +16,7 @@
     "build": "npm run client:build",
     "test:spaced": "node backEnd/test_spaced_repetition.js",
     "test:api": "jest --runInBand server/__tests__",
+    "test:coverage": "jest --runInBand --coverage --forceExit server/__tests__",
     "test": "npm run test:api",
     "client:test": "npx vitest run client/src",
     "e2e": "npx cypress open"
@@ -61,6 +62,14 @@
     "vitest": "^3.2.4"
   },
   "jest": {
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "server/**/*.js",
+      "!server/**/__tests__/**"
+    ],
+    "coverageReporters": [
+      "text",
+      "lcov"
+    ]
   }
 }
