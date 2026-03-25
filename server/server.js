@@ -152,6 +152,20 @@ const CARD_STOP_WORDS = new Set([
   "with",
 ]);
 
+// Similarity thresholds tuned to reduce duplicate paraphrases while avoiding aggressive merges.
+const DEDUPE_THRESHOLDS = Object.freeze({
+  highFrontJaccard: 0.7,
+  highFrontOverlap: 0.9,
+  minOverlapTokens: 3,
+  mediumFrontOverlap: 0.62,
+  lowBackJaccard: 0.18,
+  lowBackOverlap: 0.25,
+  lowCombinedJaccard: 0.42,
+  mediumFrontJaccard: 0.58,
+  mediumBackJaccard: 0.4,
+  mediumCombinedJaccard: 0.56,
+});
+
 function stemToken(token) {
   if (token.length > 5 && token.endsWith("ing")) return token.slice(0, -3);
   if (token.length > 4 && token.endsWith("ed")) return token.slice(0, -2);
@@ -169,8 +183,8 @@ function canonicalizeToken(token) {
   return aliases[token] || token;
 }
 
-function toTokenSet(value) {
-  const normalized = normalizeCardText(value);
+function toTokenSet(value, options = {}) {
+  const normalized = options.isNormalized ? String(value ?? "") : normalizeCardText(value);
   if (!normalized) return new Set();
 
   const tokens = normalized
@@ -218,8 +232,8 @@ function hasLargeContainment(left, right) {
 function buildCardSignature(front, back) {
   const frontNorm = normalizeCardText(front);
   const backNorm = normalizeCardText(back);
-  const frontTokens = toTokenSet(frontNorm);
-  const backTokens = toTokenSet(backNorm);
+  const frontTokens = toTokenSet(frontNorm, { isNormalized: true });
+  const backTokens = toTokenSet(backNorm, { isNormalized: true });
 
   return {
     exactKey: `${frontNorm}__${backNorm}`,
@@ -255,66 +269,40 @@ function isLikelyDuplicateCard(candidate, existingSignatures) {
     const frontOverlap = overlapCoefficient(existing.frontTokens, candidate.frontTokens);
     const backOverlap = overlapCoefficient(existing.backTokens, candidate.backTokens);
 
-    if (frontSimilarity >= 0.7) {
-      return true;
-    }
-
-    if (frontOverlap >= 0.9 && frontOverlapCount >= 3) {
+    if (frontSimilarity >= DEDUPE_THRESHOLDS.highFrontJaccard) {
       return true;
     }
 
     if (
-      frontOverlap >= 0.62
-      && (backSimilarity >= 0.18 || backOverlap >= 0.25 || combinedSimilarity >= 0.42)
+      frontOverlap >= DEDUPE_THRESHOLDS.highFrontOverlap
+      && frontOverlapCount >= DEDUPE_THRESHOLDS.minOverlapTokens
     ) {
       return true;
     }
 
-    if (frontSimilarity >= 0.58 && (backSimilarity >= 0.4 || combinedSimilarity >= 0.56)) {
+    if (
+      frontOverlap >= DEDUPE_THRESHOLDS.mediumFrontOverlap
+      && (
+        backSimilarity >= DEDUPE_THRESHOLDS.lowBackJaccard
+        || backOverlap >= DEDUPE_THRESHOLDS.lowBackOverlap
+        || combinedSimilarity >= DEDUPE_THRESHOLDS.lowCombinedJaccard
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      frontSimilarity >= DEDUPE_THRESHOLDS.mediumFrontJaccard
+      && (
+        backSimilarity >= DEDUPE_THRESHOLDS.mediumBackJaccard
+        || combinedSimilarity >= DEDUPE_THRESHOLDS.mediumCombinedJaccard
+      )
+    ) {
       return true;
     }
   }
 
   return false;
-}
-
-async function removeDuplicateCardsInDeck(deckId) {
-  const cardsQ = await pool.query(
-    `SELECT id, card_front, card_back
-     FROM card
-     WHERE deck_id = $1
-     ORDER BY created_at ASC, id ASC`,
-    [deckId]
-  );
-
-  const rows = Array.isArray(cardsQ?.rows) ? cardsQ.rows : [];
-  if (rows.length <= 1) {
-    return 0;
-  }
-
-  const keptSignatures = [];
-  const duplicateIds = [];
-
-  for (const row of rows) {
-    const signature = buildCardSignature(row.card_front, row.card_back);
-    if (isLikelyDuplicateCard(signature, keptSignatures)) {
-      duplicateIds.push(row.id);
-      continue;
-    }
-    keptSignatures.push(signature);
-  }
-
-  if (duplicateIds.length === 0) {
-    return 0;
-  }
-
-  await pool.query(
-    `DELETE FROM card
-     WHERE id = ANY($1::int[])`,
-    [duplicateIds]
-  );
-
-  return duplicateIds.length;
 }
 
 const corsOptions = {
@@ -523,7 +511,7 @@ app.post("/api/cards", async (req, res) => {
   }
 });
 
-app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) => {
+app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), async (req, res) => {
   const deckId = Number(req.params.id);
   const file = req.file;
 
@@ -536,7 +524,12 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
   }
 
   try {
-    const deckQ = await pool.query("SELECT id FROM deck WHERE id = $1", [deckId]);
+    const deckQ = await pool.query(
+      `SELECT id
+       FROM deck
+       WHERE id = $1 AND user_id = $2`,
+      [deckId, req.user.user_id]
+    );
     if (deckQ.rowCount === 0) {
       return res.status(404).json({ error: "Deck not found" });
     }
@@ -596,13 +589,7 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
       insertedCards.push(q.rows[0]);
     }
 
-    let removedDuplicates = 0;
-    try {
-      // Cleanup pass for duplicates created by older imports before dedupe logic improved.
-      removedDuplicates = await removeDuplicateCardsInDeck(deckId);
-    } catch (cleanupErr) {
-      console.error("PDF dedupe cleanup failed", cleanupErr);
-    }
+    const removedDuplicates = 0;
 
     console.log("PDF import insert summary", {
       deckId,

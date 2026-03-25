@@ -204,21 +204,36 @@ describe('Server coverage branches', () => {
     expect(release).toHaveBeenCalled();
   });
 
+  test('POST /api/decks/:id/import-pdf requires auth', async () => {
+    const app = createApp({ query: jest.fn() });
+
+    const res = await request(app)
+      .post('/api/decks/1/import-pdf')
+      .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
+
+    expect(res.status).toBe(401);
+  });
+
   test('POST /api/decks/:id/import-pdf: invalid id and missing file', async () => {
     const app = createApp({ query: jest.fn() });
 
-    let res = await request(app).post('/api/decks/abc/import-pdf');
+    let res = await request(app)
+      .post('/api/decks/abc/import-pdf')
+      .set('Cookie', ['token=signed-token']);
     expect(res.status).toBe(400);
 
-    res = await request(app).post('/api/decks/1/import-pdf');
+    res = await request(app)
+      .post('/api/decks/1/import-pdf')
+      .set('Cookie', ['token=signed-token']);
     expect(res.status).toBe(400);
   });
 
-  test('POST /api/decks/:id/import-pdf: deck not found', async () => {
+  test('POST /api/decks/:id/import-pdf: deck not found/unauthorized', async () => {
     const app = createApp({ query: jest.fn().mockResolvedValueOnce({ rowCount: 0, rows: [] }) });
 
     const res = await request(app)
       .post('/api/decks/1/import-pdf')
+      .set('Cookie', ['token=signed-token'])
       .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
 
     expect(res.status).toBe(404);
@@ -232,6 +247,7 @@ describe('Server coverage branches', () => {
 
     let res = await request(app)
       .post('/api/decks/1/import-pdf')
+      .set('Cookie', ['token=signed-token'])
       .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
     expect(res.status).toBe(422);
 
@@ -240,6 +256,7 @@ describe('Server coverage branches', () => {
 
     res = await request(app)
       .post('/api/decks/1/import-pdf')
+      .set('Cookie', ['token=signed-token'])
       .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
     expect(res.status).toBe(500);
   });
@@ -289,28 +306,13 @@ describe('Server coverage branches', () => {
             last_reviewed: null,
           },
         ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: 11,
-            card_front:
-              'State the theorem about existence of a non-identity automorphism for any group G with |G| > 2.',
-            card_back:
-              'Any group with more than two elements has a non-trivial automorphism.',
-          },
-          {
-            id: 22,
-            card_front: 'How many groups of order 231 exist up to isomorphism?',
-            card_back: 'Exactly two.',
-          },
-        ],
       });
 
     const app = createApp({ query, connect: jest.fn() });
 
     const res = await request(app)
       .post('/api/decks/1/import-pdf')
+      .set('Cookie', ['token=signed-token'])
       .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
 
     expect(res.status).toBe(200);
@@ -358,60 +360,10 @@ describe('Server coverage branches', () => {
 
     const res = await request(app)
       .post('/api/decks/1/import-pdf')
+      .set('Cookie', ['token=signed-token'])
       .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
 
     expect(res.status).toBe(200);
     expect(res.body.flashcards).toEqual({ inserted: 0, skippedDuplicates: 1, removedDuplicates: 0 });
-  });
-
-  test('POST /api/decks/:id/import-pdf removes existing deck duplicates from older imports', async () => {
-    const { generateStudyMaterialsFromPdf } = require('../../backEnd/services/aiService');
-    generateStudyMaterialsFromPdf.mockResolvedValueOnce({
-      flashcards: [
-        { front: 'How many non-isomorphic groups of order 231 exist?', back: 'Exactly two.' },
-      ],
-      quiz: [],
-    });
-
-    const query = jest
-      .fn()
-      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 1 }] })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            card_front: 'How many groups of order 231 exist up to isomorphism?',
-            card_back: 'Exactly two: cyclic and one non-abelian semidirect product.',
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        rows: [
-          {
-            id: 8,
-            card_front: 'How many groups of order 231 exist up to isomorphism?',
-            card_back: 'Exactly two: cyclic and one non-abelian semidirect product.',
-          },
-          {
-            id: 9,
-            card_front: 'How many non-isomorphic groups of order 231 exist?',
-            card_back: 'Exactly two.',
-          },
-          {
-            id: 99,
-            card_front: 'How many (up to isomorphism) groups satisfy that structure?',
-            card_back: 'Exactly two.',
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ rowCount: 1, rows: [] });
-
-    const app = createApp({ query, connect: jest.fn() });
-
-    const res = await request(app)
-      .post('/api/decks/1/import-pdf')
-      .attach('pdf', Buffer.from('%PDF-1.4 fake'), 'notes.pdf');
-
-    expect(res.status).toBe(200);
-    expect(res.body.flashcards).toEqual({ inserted: 0, skippedDuplicates: 1, removedDuplicates: 2 });
   });
 });

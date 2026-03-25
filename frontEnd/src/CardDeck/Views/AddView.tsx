@@ -62,6 +62,9 @@ export default function AddView(props: {
       <div style={styles.addGrid}>
         <div style={styles.panel}>
           <div style={styles.h3}>Manual</div>
+          <div style={styles.muted}>
+            Supports Markdown + math (for example <code>$x^2 + y^2 = z^2$</code> or <code>\\(x^2\\)</code>).
+          </div>
           <label style={styles.label}>Front</label>
           <textarea
             value={front}

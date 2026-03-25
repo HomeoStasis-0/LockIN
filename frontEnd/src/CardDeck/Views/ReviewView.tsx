@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { CardRow } from "../Types";
 import { styles } from "../Styles";
+import RichCardText from "../Components/RichCardText";
 
 function isDue(card: CardRow) {
   return card.due_date !== null && new Date(card.due_date).getTime() <= Date.now();
@@ -66,10 +67,10 @@ export default function ReviewView(props: {
       </div>
 
       <div style={styles.reviewBox}>
-        <div style={styles.reviewPrompt}>{current.card_front}</div>
+        <RichCardText text={current.card_front} style={styles.reviewPrompt} />
 
         {showBack ? (
-          <div style={styles.reviewAnswer}>{current.card_back}</div>
+          <RichCardText text={current.card_back} style={styles.reviewAnswer} />
         ) : (
           <button style={styles.primaryBtn} onClick={() => setShowBack(true)}>
             Show answer

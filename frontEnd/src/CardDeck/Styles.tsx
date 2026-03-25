@@ -65,6 +65,10 @@ export const styles: Record<string, React.CSSProperties> = {
   },
   cardFront: { fontSize: 14, fontWeight: 800, marginBottom: 4 },
   cardBack: { fontSize: 13, opacity: 0.85, whiteSpace: "pre-wrap" },
+  richText: {
+    lineHeight: 1.45,
+    wordBreak: "break-word",
+  },
   cardActions: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 },
   checkbox: { fontSize: 12, display: "flex", gap: 6, alignItems: "center" },
 
@@ -82,7 +86,6 @@ export const styles: Record<string, React.CSSProperties> = {
     borderTop: "1px dashed #e5e7eb",
     paddingTop: 12,
     fontSize: 14,
-    whiteSpace: "pre-wrap",
   },
   ratingRow: { display: "flex", gap: 8, flexWrap: "wrap" },
   reviewFooter: { display: "flex", justifyContent: "space-between", alignItems: "center" },
