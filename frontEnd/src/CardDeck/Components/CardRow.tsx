@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { CardRow as CardRowType } from "../Types";
 import { styles } from "../Styles";
 import CardEditor from "./CardEditor";
+import RichCardText from "./RichCardText";
 
 function isInReviewPile(card: CardRowType) {
   return card.due_date !== null;
@@ -30,8 +31,8 @@ export default function CardRow(props: {
       ) : (
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={styles.cardFront}>{props.card.card_front}</div>
-            <div style={styles.cardBack}>{props.card.card_back}</div>
+            <RichCardText text={props.card.card_front} style={styles.cardFront} />
+            <RichCardText text={props.card.card_back} style={styles.cardBack} />
             <div style={styles.muted}>
               Interval: {props.card.interval_days} day(s) · Reps: {props.card.repetitions}
             </div>

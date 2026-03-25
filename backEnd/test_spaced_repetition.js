@@ -30,6 +30,13 @@ function testSm2Basic() {
   const r3 = sm2Update(card, 5);
   assert.ok(r3.repetitions === 3);
   assert.ok(r3.interval_days >= 6);
+
+  const failed = sm2Update(
+    { ease_factor: r3.ease_factor, repetitions: r3.repetitions, interval_days: r3.interval_days },
+    1
+  );
+  assert.strictEqual(failed.repetitions, r3.repetitions);
+  assert.strictEqual(failed.interval_days, 0);
 }
 
 if (require.main === module) {

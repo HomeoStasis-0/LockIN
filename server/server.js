@@ -78,11 +78,13 @@ function normalizeFlashcards(studySet) {
   const merged = cardsFromFlashcards.length > 0 ? cardsFromFlashcards : cardsFromQuiz;
 
   // Deduplicate repeated cards from model output.
-  const seen = new Set();
+  const signatures = [];
   return merged.filter((c) => {
-    const key = `${c.front}__${c.back}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
+    const signature = buildCardSignature(c.front, c.back);
+    if (isLikelyDuplicateCard(signature, signatures)) {
+      return false;
+    }
+    signatures.push(signature);
     return true;
   });
 }
@@ -90,8 +92,217 @@ function normalizeFlashcards(studySet) {
 function normalizeCardText(value) {
   return String(value ?? "")
     .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+const CARD_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "any",
+  "are",
+  "as",
+  "at",
+  "about",
+  "be",
+  "by",
+  "can",
+  "condition",
+  "define",
+  "does",
+  "equivalently",
+  "exist",
+  "exists",
+  "existence",
+  "for",
+  "from",
+  "given",
+  "guarantee",
+  "guarantees",
+  "has",
+  "have",
+  "how",
+  "if",
+  "imply",
+  "in",
+  "is",
+  "it",
+  "its",
+  "mean",
+  "means",
+  "of",
+  "on",
+  "or",
+  "over",
+  "state",
+  "such",
+  "that",
+  "the",
+  "theorem",
+  "then",
+  "this",
+  "to",
+  "what",
+  "when",
+  "where",
+  "which",
+  "why",
+  "with",
+]);
+
+// Similarity thresholds tuned to reduce duplicate paraphrases while avoiding aggressive merges.
+const DEDUPE_THRESHOLDS = Object.freeze({
+  highFrontJaccard: 0.7,
+  highFrontOverlap: 0.9,
+  minOverlapTokens: 3,
+  mediumFrontOverlap: 0.62,
+  lowBackJaccard: 0.18,
+  lowBackOverlap: 0.25,
+  lowCombinedJaccard: 0.42,
+  mediumFrontJaccard: 0.58,
+  mediumBackJaccard: 0.4,
+  mediumCombinedJaccard: 0.56,
+});
+
+function stemToken(token) {
+  if (token.length > 5 && token.endsWith("ing")) return token.slice(0, -3);
+  if (token.length > 4 && token.endsWith("ed")) return token.slice(0, -2);
+  if (token.length > 4 && token.endsWith("es")) return token.slice(0, -2);
+  if (token.length > 3 && token.endsWith("s")) return token.slice(0, -1);
+  return token;
+}
+
+function canonicalizeToken(token) {
+  const aliases = {
+    identical: "identity",
+    nontrivial: "non",
+    theorem: "result",
+  };
+  return aliases[token] || token;
+}
+
+function toTokenSet(value, options = {}) {
+  const normalized = options.isNormalized ? String(value ?? "") : normalizeCardText(value);
+  if (!normalized) return new Set();
+
+  const tokens = normalized
+    .split(" ")
+    .map(stemToken)
+    .map(canonicalizeToken)
+    .filter((token) => (token.length > 1 || /^\d+$/.test(token)) && !CARD_STOP_WORDS.has(token));
+
+  return new Set(tokens);
+}
+
+function tokenOverlapCount(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+
+  let overlap = 0;
+  for (const token of setA) {
+    if (setB.has(token)) overlap += 1;
+  }
+  return overlap;
+}
+
+function jaccardSimilarity(setA, setB) {
+  if (!setA.size && !setB.size) return 1;
+  if (!setA.size || !setB.size) return 0;
+
+  const overlap = tokenOverlapCount(setA, setB);
+
+  const unionSize = setA.size + setB.size - overlap;
+  return unionSize === 0 ? 0 : overlap / unionSize;
+}
+
+function overlapCoefficient(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+  const overlap = tokenOverlapCount(setA, setB);
+  return overlap / Math.min(setA.size, setB.size);
+}
+
+function hasLargeContainment(left, right) {
+  if (!left || !right) return false;
+  const minLen = Math.min(left.length, right.length);
+  if (minLen < 28) return false;
+  return left.includes(right) || right.includes(left);
+}
+
+function buildCardSignature(front, back) {
+  const frontNorm = normalizeCardText(front);
+  const backNorm = normalizeCardText(back);
+  const frontTokens = toTokenSet(frontNorm, { isNormalized: true });
+  const backTokens = toTokenSet(backNorm, { isNormalized: true });
+
+  return {
+    exactKey: `${frontNorm}__${backNorm}`,
+    frontNorm,
+    backNorm,
+    frontTokens,
+    backTokens,
+    combinedTokens: new Set([...frontTokens, ...backTokens]),
+  };
+}
+
+function isLikelyDuplicateCard(candidate, existingSignatures) {
+  for (const existing of existingSignatures) {
+    if (existing.exactKey === candidate.exactKey) {
+      return true;
+    }
+
+    if (existing.frontNorm === candidate.frontNorm && existing.frontNorm.length > 0) {
+      return true;
+    }
+
+    if (hasLargeContainment(existing.frontNorm, candidate.frontNorm)) {
+      return true;
+    }
+
+    const frontSimilarity = jaccardSimilarity(existing.frontTokens, candidate.frontTokens);
+    const backSimilarity = jaccardSimilarity(existing.backTokens, candidate.backTokens);
+    const combinedSimilarity = jaccardSimilarity(
+      existing.combinedTokens,
+      candidate.combinedTokens
+    );
+    const frontOverlapCount = tokenOverlapCount(existing.frontTokens, candidate.frontTokens);
+    const frontOverlap = overlapCoefficient(existing.frontTokens, candidate.frontTokens);
+    const backOverlap = overlapCoefficient(existing.backTokens, candidate.backTokens);
+
+    if (frontSimilarity >= DEDUPE_THRESHOLDS.highFrontJaccard) {
+      return true;
+    }
+
+    if (
+      frontOverlap >= DEDUPE_THRESHOLDS.highFrontOverlap
+      && frontOverlapCount >= DEDUPE_THRESHOLDS.minOverlapTokens
+    ) {
+      return true;
+    }
+
+    if (
+      frontOverlap >= DEDUPE_THRESHOLDS.mediumFrontOverlap
+      && (
+        backSimilarity >= DEDUPE_THRESHOLDS.lowBackJaccard
+        || backOverlap >= DEDUPE_THRESHOLDS.lowBackOverlap
+        || combinedSimilarity >= DEDUPE_THRESHOLDS.lowCombinedJaccard
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      frontSimilarity >= DEDUPE_THRESHOLDS.mediumFrontJaccard
+      && (
+        backSimilarity >= DEDUPE_THRESHOLDS.mediumBackJaccard
+        || combinedSimilarity >= DEDUPE_THRESHOLDS.mediumCombinedJaccard
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 const corsOptions = {
@@ -300,7 +511,7 @@ app.post("/api/cards", async (req, res) => {
   }
 });
 
-app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) => {
+app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), async (req, res) => {
   const deckId = Number(req.params.id);
   const file = req.file;
 
@@ -313,7 +524,12 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
   }
 
   try {
-    const deckQ = await pool.query("SELECT id FROM deck WHERE id = $1", [deckId]);
+    const deckQ = await pool.query(
+      `SELECT id
+       FROM deck
+       WHERE id = $1 AND user_id = $2`,
+      [deckId, req.user.user_id]
+    );
     if (deckQ.rowCount === 0) {
       return res.status(404).json({ error: "Deck not found" });
     }
@@ -340,10 +556,8 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
        WHERE deck_id = $1`,
       [deckId]
     );
-    const existingKeys = new Set(
-      existingQ.rows.map(
-        (r) => `${normalizeCardText(r.card_front)}__${normalizeCardText(r.card_back)}`
-      )
+    const existingSignatures = existingQ.rows.map((r) =>
+      buildCardSignature(r.card_front, r.card_back)
     );
 
     const insertedCards = [];
@@ -355,12 +569,12 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
         continue;
       }
 
-      const dedupeKey = `${normalizeCardText(front)}__${normalizeCardText(back)}`;
-      if (existingKeys.has(dedupeKey)) {
+      const signature = buildCardSignature(front, back);
+      if (isLikelyDuplicateCard(signature, existingSignatures)) {
         skippedDuplicates++;
         continue;
       }
-      existingKeys.add(dedupeKey);
+      existingSignatures.push(signature);
 
       const q = await pool.query(
         `INSERT INTO card (
@@ -375,14 +589,17 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
       insertedCards.push(q.rows[0]);
     }
 
+    const removedDuplicates = 0;
+
     console.log("PDF import insert summary", {
       deckId,
       inserted: insertedCards.length,
       skippedDuplicates,
+      removedDuplicates,
     });
 
     return res.json({
-      flashcards: { inserted: insertedCards.length, skippedDuplicates },
+      flashcards: { inserted: insertedCards.length, skippedDuplicates, removedDuplicates },
       insertedCards,
       quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
     });
@@ -396,43 +613,6 @@ app.post("/api/decks/:id/import-pdf", uploadPdf.single("pdf"), async (req, res) 
     try {
       await fs.unlink(file.path);
     } catch (_) {}
-  }
-});
-
-app.patch("/api/cards/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const c = req.body ?? {};
-
-  try {
-    const q = await pool.query(
-      `UPDATE card
-       SET card_front = $1,
-           card_back = $2,
-           ease_factor = $3,
-           interval_days = $4,
-           repetitions = $5,
-           due_date = $6,
-           last_reviewed = $7
-       WHERE id = $8
-       RETURNING id, deck_id, card_front, card_back, created_at,
-                 ease_factor, interval_days, repetitions, due_date, last_reviewed`,
-      [
-        c.card_front,
-        c.card_back,
-        c.ease_factor,
-        c.interval_days,
-        c.repetitions,
-        c.due_date,
-        c.last_reviewed,
-        id,
-      ]
-    );
-
-    if (q.rowCount === 0) return res.status(404).json({ error: "Card not found" });
-    res.json(q.rows[0]);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Database error" });
   }
 });
 
@@ -604,6 +784,7 @@ app.delete("/api/decks/:id", authenticate, async (req, res) => {
   }
 });
 
+/* istanbul ignore next */
 if (require.main === module) {
   const PORT = process.env.PORT || 8080;
   app.listen(PORT, () => {

@@ -36,8 +36,8 @@ function sm2Update(card = {}, quality, now = null) {
 
   let interval;
   if (q < 3) {
-    reps = 0;
-    interval = 1;
+    // "Again" should keep lifetime reps and return card to the queue immediately.
+    interval = 0;
   } else {
     reps += 1;
     if (reps === 1) {
