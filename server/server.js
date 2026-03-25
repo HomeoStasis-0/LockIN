@@ -119,7 +119,7 @@ const CARD_STOP_WORDS = new Set([
   "for",
   "from",
   "given",
-  "guarante",
+  "guarantee",
   "guarantees",
   "has",
   "have",
