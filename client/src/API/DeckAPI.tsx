@@ -1,4 +1,4 @@
-import type { CardRow, DeckRow, DeckWithCards } from "../Types";
+import type { CardRow, DeckRow, DeckWithCards } from "../types/DeckTypes";
 
 function normalizeCard(c: any) {
   return {
