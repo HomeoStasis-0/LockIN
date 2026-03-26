@@ -784,6 +784,19 @@ app.delete("/api/decks/:id", authenticate, async (req, res) => {
   }
 });
 
+// Serve the built client in production-style environments (e.g., Heroku).
+const clientDistPath = path.join(__dirname, "..", "client", "dist");
+app.use(express.static(clientDistPath));
+
+// SPA fallback: non-API routes should return index.html.
+app.get(/^\/(?!api|auth).*/, (req, res) => {
+  res.sendFile(path.join(clientDistPath, "index.html"), (err) => {
+    if (err) {
+      res.status(404).send("Client build not found. Run npm run build.");
+    }
+  });
+});
+
 /* istanbul ignore next */
 if (require.main === module) {
   const PORT = process.env.PORT || 8080;
