@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CardRow } from "../Types";
-import { styles } from "../Styles";
-import RichCardText from "../Components/RichCardText";
+import type { CardRow } from "../types/DeckTypes";
+import { styles } from "../styles/DeckStyles";
+import RichCardText from "../components/RichCardText";
 
 function isDue(card: CardRow) {
   return card.due_date !== null && new Date(card.due_date).getTime() <= Date.now();

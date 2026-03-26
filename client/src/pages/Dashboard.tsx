@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import type { DeckRow } from "../../../frontEnd/src/CardDeck/Types"; // probably should move this type to a more shared location
+import type { DeckRow } from "../types/DeckTypes"; // probably should move this type to a more shared location
 
 
 type CreateDeckBody = {

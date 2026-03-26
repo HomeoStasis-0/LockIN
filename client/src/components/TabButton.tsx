@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { styles } from "../Styles";
+import { styles } from "../styles/DeckStyles";
 
 export default function TabButton({
   active,

@@ -8,8 +8,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const multer = require("multer");
-const { updateCardDb } = require("../backEnd/spaced_repetition");
-const { generateStudyMaterialsFromPdf } = require("../backEnd/services/aiService");
+const { updateCardDb } = require("./utils/spaced_repetition");
+const { generateStudyMaterialsFromPdf } = require("./services/aiService");
 
 const app = express();
 

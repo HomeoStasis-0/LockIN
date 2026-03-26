@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 /** Path to pdf_to_quiz.py (project root) */
-const PDF_TO_QUIZ_PATH = path.join(__dirname, 'ai_util', 'pdf_to_quiz.py');
+const PDF_TO_QUIZ_PATH = path.join(__dirname, "..", "python", "pdf_to_quiz.py");
 
 function resolvePythonBin() {
   const candidates = [

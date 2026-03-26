@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { styles } from "../Styles";
+import { styles } from "../styles/DeckStyles";
 
 export default function AddView(props: {
   deckId: number;

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { CardRow as CardRowType } from "../Types";
-import { styles } from "../Styles";
+import type { CardRow as CardRowType } from "../types/DeckTypes";
+import { styles } from "../styles/DeckStyles";
 import CardEditor from "./CardEditor";
 import RichCardText from "./RichCardText";
 

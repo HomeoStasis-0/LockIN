@@ -4,7 +4,7 @@
  */
 const path = require('path');
 const fs = require('fs').promises;
-const { generateFromPdf } = require('../ai_client');
+const { generateFromPdf } = require('../utils/ai_client');
 
 /**
  * Generate flashcards and quiz from an uploaded PDF file.
