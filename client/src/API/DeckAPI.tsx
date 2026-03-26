@@ -1,30 +1,6 @@
-import type { DeckRow, CardRow, DeckWithCards } from "../../../frontEnd/src/CardDeck/Types"; // probably should move this type to a more shared location
+import type { CardRow, DeckRow, DeckWithCards } from "../Types";
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    credentials: "include", // cookie auth
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  });
-
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${text}`);
-  return text ? (JSON.parse(text) as T) : (null as T);
-}
-
-function normalizeDeck(d: any): DeckRow {
-  return {
-    ...d,
-    id: Number(d.id),
-    user_id: Number(d.user_id),
-    course_number: d.course_number == null ? null : Number(d.course_number),
-  };
-}
-
-function normalizeCard(c: any): CardRow {
+function normalizeCard(c: any) {
   return {
     ...c,
     id: Number(c.id),
@@ -32,76 +8,124 @@ function normalizeCard(c: any): CardRow {
     ease_factor: Number(c.ease_factor),
     interval_days: Number(c.interval_days),
     repetitions: Number(c.repetitions),
-    due_date: c.due_date == null || c.due_date === "" || c.due_date === "null" ? null : String(c.due_date),
-    last_reviewed: c.last_reviewed == null || c.last_reviewed === "" || c.last_reviewed === "null" ? null : String(c.last_reviewed),
   };
 }
 
-// ---------- DECKS ----------
-export async function listDecks(): Promise<DeckRow[]> {
-  const rows = await api<any[]>(`/api/decks`);
-  return (rows ?? []).map(normalizeDeck);
-}
-
-export async function createDeck(input: {
-  deck_name: string;
-  subject?: string | null;
-  course_number?: number | null;
-  instructor?: string | null;
-}): Promise<DeckRow> {
-  const row = await api<any>(`/api/decks`, {
-    method: "POST",
-    body: JSON.stringify({
-      deck_name: input.deck_name,
-      subject: input.subject ?? null,
-      course_number: input.course_number ?? null,
-      instructor: input.instructor ?? null,
-    }),
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    credentials: "include", // needed if you use cookies
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
   });
-  return normalizeDeck(row);
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("API error", path, res.status, text);
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+
+  return res.json() as Promise<T>;
 }
 
-// ---------- DECK + CARDS ----------
+// Example response shape from backend
+export type DeckWithCardsResponse = {
+  deck: DeckRow;
+  cards: CardRow[];
+};
+
+export type ImportPdfResponse = {
+  flashcards: { inserted: number; skippedDuplicates?: number };
+  insertedCards: CardRow[];
+  quiz: Array<{
+    question: string;
+    options: string[];
+    correct_answer: string;
+  }>;
+};
+
 export async function getDeckWithCards(deckId: number): Promise<DeckWithCards> {
   const data = await api<any>(`/api/decks/${deckId}`);
-  return {
-    ...normalizeDeck(data.deck),
-    cards: (data.cards ?? []).map(normalizeCard),
+
+  const deck: DeckRow = {
+    ...data.deck,
+    id: Number(data.deck.id),
+    user_id: Number(data.deck.user_id),
+    course_number:
+      data.deck.course_number == null ? null : Number(data.deck.course_number),
   };
+
+  const cards: CardRow[] = (data.cards ?? []).map((c: any) => ({
+    ...c,
+    id: Number(c.id),
+    deck_id: Number(c.deck_id),
+    ease_factor: Number(c.ease_factor),
+    interval_days: Number(c.interval_days),
+    repetitions: Number(c.repetitions),
+  }));
+
+  return { ...deck, cards };
 }
 
-// ---------- CARDS ----------
 export async function createCard(input: {
   deck_id: number;
   card_front: string;
   card_back: string;
 }): Promise<CardRow> {
-  const row = await api<any>(`/api/cards`, {
+  const c = await api<CardRow>(`/api/cards`, {
     method: "POST",
     body: JSON.stringify(input),
   });
-  return normalizeCard(row);
+  return normalizeCard(c);
 }
 
 export async function updateCard(card: CardRow): Promise<CardRow> {
-  const row = await api<any>(`/api/cards/${card.id}`, {
+  const c = await api<CardRow>(`/api/cards/${card.id}`, {
     method: "PATCH",
     body: JSON.stringify(card),
   });
-  return normalizeCard(row);
+  return normalizeCard(c);
 }
 
 export async function deleteCard(cardId: number): Promise<{ ok: true }> {
-  return api<{ ok: true }>(`/api/cards/${cardId}`, { method: "DELETE" });
+  const c = await api<{ ok: true }>(`/api/cards/${cardId}`, {
+    method: "DELETE",
+  });
+  return c;
 }
 
 export async function rateCard(input: {
   card_id: number;
   rating: "again" | "hard" | "good" | "easy";
 }): Promise<CardRow> {
-  const row = await api<any>(`/api/cards/${input.card_id}/rate`, {
+  const c = await api<CardRow>(`/api/cards/${input.card_id}/rate`, {
     method: "POST",
     body: JSON.stringify({ rating: input.rating }),
   });
-  return normalizeCard(row);
+  return normalizeCard(c);
+}
+
+export async function importPdfToDeck(deckId: number, file: File): Promise<ImportPdfResponse> {
+  const data = new FormData();
+  data.append("pdf", file);
+
+  const res = await fetch(`/api/decks/${deckId}/import-pdf`, {
+    method: "POST",
+    credentials: "include",
+    body: data,
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("API error", `/api/decks/${deckId}/import-pdf`, res.status, text);
+    throw new Error(`${res.status} ${res.statusText}: ${text}`);
+  }
+
+  const json = (await res.json()) as ImportPdfResponse;
+  return {
+    ...json,
+    insertedCards: (json.insertedCards ?? []).map(normalizeCard),
+  };
 }

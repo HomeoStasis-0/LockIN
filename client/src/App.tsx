@@ -3,7 +3,7 @@ import Landing from "./pages/Landing";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
-import DeckUI from "../../frontEnd/src/CardDeck/CardDeck";
+import DeckUI from "./pages/CardDeck";
 import CourseView from "./pages/CourseView";
 import { useAuth } from "./context/AuthContext";
 

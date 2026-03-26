@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { CardRow } from "../Types";
-import { styles } from "../Styles";
+import type { CardRow } from "../types/DeckTypes";
+import { styles } from "../styles/DeckStyles";
 
 export default function CardEditor(props: {
   initial: CardRow;

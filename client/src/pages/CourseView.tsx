@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "react-router-dom";
-import DeckUI from "../../../frontEnd/src/CardDeck/CardDeck";
+import DeckUI from "./CardDeck";
 
 export default function CourseView() {
   const navigate = useNavigate();

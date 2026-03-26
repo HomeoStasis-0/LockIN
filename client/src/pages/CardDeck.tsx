@@ -1,10 +1,10 @@
 import { useMemo, useState, useEffect } from "react";
-import { styles } from "./Styles";
-import type { CardRow, DeckWithCards } from "./Types";
-import LearnView from "./Views/LearnView";
-import ReviewView from "./Views/ReviewView";
-import AddView from "./Views/AddView";
-import TabButton from "./Components/TabButton";
+import { styles } from "../styles/DeckStyles";
+import type { CardRow, DeckWithCards } from "../types/DeckTypes";
+import LearnView from "../views/LearnView";
+import ReviewView from "../views/ReviewView";
+import AddView from "../views/AddView";
+import TabButton from "../components/TabButton";
 import {
   getDeckWithCards,
   createCard,
@@ -12,7 +12,7 @@ import {
   deleteCard,
   rateCard as apiRateCard,
   importPdfToDeck,
-} from "./API/DeckAPI";
+} from "../API/DeckAPI";
 
 function isInReviewPile(card: CardRow) {
   return card.due_date !== null;

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import type { CardRow } from "../Types";
-import { styles } from "../Styles";
-import CardRowView from "../Components/CardRow";
+import type { CardRow } from "../types/DeckTypes";
+import { styles } from "../styles/DeckStyles";
+import CardRowView from "../components/CardRow";
 
 export default function LearnView(props: {
   cards: CardRow[];
