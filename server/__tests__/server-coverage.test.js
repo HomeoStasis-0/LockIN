@@ -15,11 +15,11 @@ jest.mock('jsonwebtoken', () => ({
   verify: jest.fn(() => ({ user_id: 67, username: 'tester' })),
 }));
 
-jest.mock('../../backEnd/spaced_repetition', () => ({
+jest.mock('../utils/spaced_repetition', () => ({
   updateCardDb: jest.fn(() => Promise.resolve({})),
 }));
 
-jest.mock('../../backEnd/services/aiService', () => ({
+jest.mock('../services/aiService', () => ({
   generateStudyMaterialsFromPdf: jest.fn(),
 }));
 
@@ -37,8 +37,8 @@ beforeEach(() => {
 
   const bcrypt = require('bcryptjs');
   const jwt = require('jsonwebtoken');
-  const { updateCardDb } = require('../../backEnd/spaced_repetition');
-  const { generateStudyMaterialsFromPdf } = require('../../backEnd/services/aiService');
+  const { updateCardDb } = require('../utils/spaced_repetition');
+  const { generateStudyMaterialsFromPdf } = require('../services/aiService');
 
   bcrypt.compare.mockImplementation(() => true);
   bcrypt.hash.mockImplementation(() => 'hashed-password');
@@ -240,7 +240,7 @@ describe('Server coverage branches', () => {
   });
 
   test('POST /api/decks/:id/import-pdf: no flashcards and AI failure', async () => {
-    const { generateStudyMaterialsFromPdf } = require('../../backEnd/services/aiService');
+    const { generateStudyMaterialsFromPdf } = require('../services/aiService');
 
     generateStudyMaterialsFromPdf.mockResolvedValueOnce({ flashcards: [], quiz: [] });
     let app = createApp({ query: jest.fn().mockResolvedValueOnce({ rowCount: 1, rows: [{ id: 1 }] }) });
@@ -262,7 +262,7 @@ describe('Server coverage branches', () => {
   });
 
   test('POST /api/decks/:id/import-pdf success path with near-duplicate skipping', async () => {
-    const { generateStudyMaterialsFromPdf } = require('../../backEnd/services/aiService');
+    const { generateStudyMaterialsFromPdf } = require('../services/aiService');
     generateStudyMaterialsFromPdf.mockResolvedValueOnce({
       flashcards: [
         {
@@ -320,7 +320,7 @@ describe('Server coverage branches', () => {
   });
 
   test('POST /api/decks/:id/import-pdf skips cross-upload paraphrase duplicates', async () => {
-    const { generateStudyMaterialsFromPdf } = require('../../backEnd/services/aiService');
+    const { generateStudyMaterialsFromPdf } = require('../services/aiService');
     generateStudyMaterialsFromPdf.mockResolvedValueOnce({
       flashcards: [
         {
