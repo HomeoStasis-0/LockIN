@@ -15,7 +15,7 @@ jest.mock('jsonwebtoken', () => ({
   verify: jest.fn(() => ({ user_id: 67, username: 'tester' })),
 }));
 
-jest.mock('../../backEnd/spaced_repetition', () => ({
+jest.mock('../utils/spaced_repetition', () => ({
   updateCardDb: jest.fn(() => Promise.resolve({})),
 }));
 
@@ -97,7 +97,7 @@ describe('Additional API routes', () => {
   });
 
   test('POST /api/cards/:id/rate validates rating', async () => {
-    const { updateCardDb } = require('../../backEnd/spaced_repetition');
+    const { updateCardDb } = require('../utils/spaced_repetition');
 
     const poolQuery = jest.fn();
     const { Pool } = require('pg');
@@ -114,7 +114,7 @@ describe('Additional API routes', () => {
   });
 
   test('POST /api/cards/:id/rate updates schedule and returns updated card', async () => {
-    const { updateCardDb } = require('../../backEnd/spaced_repetition');
+    const { updateCardDb } = require('../utils/spaced_repetition');
 
     const poolQuery = jest.fn();
     poolQuery.mockResolvedValueOnce({
