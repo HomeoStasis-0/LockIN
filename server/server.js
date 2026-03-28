@@ -10,6 +10,8 @@ const cookieParser = require("cookie-parser");
 const multer = require("multer");
 const { updateCardDb } = require("./utils/spaced_repetition");
 const { generateStudyMaterialsFromPdf } = require("./services/aiService");
+const createCommunityRouter = require("./routes/community");
+
 
 const app = express();
 
@@ -438,6 +440,9 @@ const authenticate = (req, res, next) => {
   }
 };
 
+app.use("/api/community", createCommunityRouter(pool, authenticate));
+
+
 // React checks login 
 app.get("/auth/me", authenticate, async (req, res) => {
   const result = await pool.query(
@@ -804,5 +809,147 @@ if (require.main === module) {
     console.log(`Server started on port ${PORT}`);
   });
 }
+
+app.post("/api/decks/:id/publish", authenticate, async (req, res) => {
+  const deckId = Number(req.params.id);
+
+  if (!Number.isFinite(deckId)) {
+    return res.status(400).json({ error: "Invalid deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const deckQ = await client.query(
+      `
+      SELECT id, user_id, deck_name, subject, course_number, instructor
+      FROM deck
+      WHERE id = $1 AND user_id = $2
+      `,
+      [deckId, req.user.user_id]
+    );
+
+    if (deckQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Deck not found or not owned by user" });
+    }
+
+    const deck = deckQ.rows[0];
+
+    const existingQ = await client.query(
+      `
+      SELECT id
+      FROM public_deck
+      WHERE user_id = $1 AND deck_name = $2 AND course_number IS NOT DISTINCT FROM $3
+      `,
+      [deck.user_id, deck.deck_name, deck.course_number]
+    );
+
+    if (existingQ.rowCount > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Deck is already public" });
+    }
+
+    const publicDeckQ = await client.query(
+      `
+      INSERT INTO public_deck (user_id, deck_name, subject, course_number, instructor)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at
+      `,
+      [
+        deck.user_id,
+        deck.deck_name,
+        deck.subject,
+        deck.course_number,
+        deck.instructor,
+      ]
+    );
+
+    const publicDeck = publicDeckQ.rows[0];
+
+    const cardsQ = await client.query(
+      `
+      SELECT id
+      FROM card
+      WHERE deck_id = $1
+      ORDER BY id
+      `,
+      [deckId]
+    );
+
+    for (const row of cardsQ.rows) {
+      await client.query(
+        `
+        INSERT INTO public_deck_card (public_deck_id, card_id)
+        VALUES ($1, $2)
+        ON CONFLICT (public_deck_id, card_id) DO NOTHING
+        `,
+        [publicDeck.id, row.id]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      message: "Deck made public",
+      public_deck: publicDeck,
+      linked_cards: cardsQ.rowCount,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/decks/:id/publish error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
+  const deckId = Number(req.params.id);
+
+  if (!Number.isFinite(deckId)) {
+    return res.status(400).json({ error: "Invalid deck id" });
+  }
+
+  try {
+    const deckQ = await pool.query(
+      `
+      SELECT id, user_id, deck_name, course_number
+      FROM deck
+      WHERE id = $1 AND user_id = $2
+      `,
+      [deckId, req.user.user_id]
+    );
+
+    if (deckQ.rowCount === 0) {
+      return res.status(404).json({ error: "Deck not found or not owned by user" });
+    }
+
+    const deck = deckQ.rows[0];
+
+    const deleteQ = await pool.query(
+      `
+      DELETE FROM public_deck
+      WHERE user_id = $1
+        AND deck_name = $2
+        AND course_number IS NOT DISTINCT FROM $3
+      RETURNING id
+      `,
+      [deck.user_id, deck.deck_name, deck.course_number]
+    );
+
+    if (deleteQ.rowCount === 0) {
+      return res.status(404).json({ error: "Public deck not found" });
+    }
+
+    res.json({ unpublished: true });
+  } catch (err) {
+    console.error("DELETE /api/decks/:id/publish error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 
 module.exports = app;
