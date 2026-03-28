@@ -5,6 +5,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import DeckUI from "./pages/CardDeck";
 import CourseView from "./pages/CourseView";
+import Community from "./pages/Community";
 import { useAuth } from "./context/AuthContext";
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       <Route path="/dashboard" element={<Dashboard />} />
+      <Route path="/community" element={<Community />} />
       // what's this for?
       <Route path="/cards/" element={user ? <DeckUI deckId={1}/> : <Navigate to="/login" replace />} />
       <Route path="/courses/:id" element={user ? <CourseView /> : <Navigate to="/login" replace />} />

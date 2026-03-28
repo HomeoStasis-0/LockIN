@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import type { DeckRow } from "../types/DeckTypes"; // probably should move this type to a more shared location
+import { publishDeck, unpublishDeck } from "../API/CommunityAPI";
 
 
 type CreateDeckBody = {
@@ -72,6 +73,35 @@ export default function Dashboard() {
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newId, setNewId] = useState(""); // e.g. CSCE120
+
+  const [publishingDeckId, setPublishingDeckId] = useState<number | null>(null);
+  const [publishedDeckIds, setPublishedDeckIds] = useState<Record<number, boolean>>({});
+
+  async function publishCourse(deckId: number) {
+  try {
+    setPublishingDeckId(deckId);
+    await publishDeck(deckId);
+    setPublishedDeckIds((prev) => ({ ...prev, [deckId]: true }));
+    alert("Deck published successfully");
+  } catch (e) {
+    alert(e instanceof Error ? e.message : "Failed to publish deck");
+  } finally {
+    setPublishingDeckId(null);
+  }
+}
+
+async function unpublishCourse(deckId: number) {
+  try {
+    setPublishingDeckId(deckId);
+    await unpublishDeck(deckId);
+    setPublishedDeckIds((prev) => ({ ...prev, [deckId]: false }));
+    alert("Deck unpublished successfully");
+  } catch (e) {
+    alert(e instanceof Error ? e.message : "Failed to unpublish deck");
+  } finally {
+    setPublishingDeckId(null);
+  }
+}
 
   // load decks once user is known
   useEffect(() => {
@@ -251,6 +281,25 @@ export default function Dashboard() {
                   >
                     Open
                   </Link>
+                  <button
+                    onClick={() =>
+                      publishedDeckIds[d.id] ? unpublishCourse(d.id) : publishCourse(d.id)
+                    }
+                    disabled={publishingDeckId === d.id}
+                    className={`px-4 py-2 bg-white border rounded transition disabled:opacity-60 ${
+                      publishedDeckIds[d.id]
+                        ? "text-orange-600 border-orange-300 hover:bg-orange-50"
+                        : "text-blue-600 border-blue-300 hover:bg-blue-50"
+                    }`}
+                  >
+                    {publishingDeckId === d.id
+                      ? publishedDeckIds[d.id]
+                        ? "Unpublishing..."
+                        : "Publishing..."
+                      : publishedDeckIds[d.id]
+                      ? "Unpublish"
+                      : "Publish"}
+                  </button>
                   <button
                     onClick={() => deleteCourse(d.id, d.deck_name)}
                     disabled={deletingDeckId === d.id}
