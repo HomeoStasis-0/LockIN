@@ -10,8 +10,8 @@ import { styles } from "../styles/DeckStyles";
 function normalizeMathDelimiters(text: string): string {
   // Support common LaTeX delimiters from AI output in addition to $...$/$$...$$.
     const converted = text
-      .replace(/\\\(([\s\S]+?)\\\)/g, "$1$")
-      .replace(/\\\[([\s\S]+?)\\\]/g, "$$$1$$")
+      .replace(/\\\(([\s\S]+?)\\\)/g, (_m, inner) => `$${String(inner).trim()}$`)
+      .replace(/\\\[([\s\S]+?)\\\]/g, (_m, inner) => `$$${String(inner).trim()}$$`)
       .replace(/∥([^∥]+)∥/g, "\\\\|$1\\\\|")
       .replace(/→/g, "\\\\to ")
       .replace(/∞/g, "\\\\infty")
@@ -25,17 +25,16 @@ function normalizeMathDelimiters(text: string): string {
     const hasExplicitMath = /\$|\\\(|\\\[/.test(converted);
     if (hasExplicitMath) return converted;
 
-    const lines = converted.split("\n");
-    const normalizedLines = lines.map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return line;
-      const hasMathCue = /[_^=]|\\(int|frac|sum|prod|lim|to|infty|cdot|times|le|ge|ne)\b/.test(trimmed);
-      if (!hasMathCue) return line;
-      if (/\$/.test(trimmed)) return line;
-      return `$${trimmed}$`;
-    });
+    // Fallback for malformed AI output: wrap only math-like token clusters,
+    // not whole sentences, to avoid rendering plain text as italic math.
+    const mathLike = /([A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+|\^[A-Za-z0-9{}()+\-]+)+(?:\([^)]+\))?|\\(?:int|frac|sum|prod|lim|to|infty|cdot|times|le|ge|ne|sqrt|alpha|beta|gamma|delta|theta|lambda|pi|sigma|omega)\b(?:\s*\{[^}]+\})?)/g;
 
-    return normalizedLines.join("\n");
+    return converted.replace(mathLike, (segment, _g1, offset, full) => {
+      const before = offset > 0 ? full[offset - 1] : "";
+      const after = offset + segment.length < full.length ? full[offset + segment.length] : "";
+      if (before === "$" || after === "$") return segment;
+      return `$${segment}$`;
+    });
 }
 
 export default function RichCardText(props: {

@@ -5,4 +5,8 @@ python-dotenv
 passlib[bcrypt]
 pdfplumber
 groq
+python-pptx
+python-docx
+openpyxl
+pytesseract
 

@@ -8,14 +8,33 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const multer = require("multer");
+const extractZip = require("extract-zip");
 const { updateCardDb } = require("./utils/spaced_repetition");
-const { generateStudyMaterialsFromPdf } = require("./services/aiService");
+const { generateStudyMaterials } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
 
 
 const app = express();
 
 const uploadDir = path.join(__dirname, "..", "uploads");
+const extractDir = path.join(__dirname, "..", "uploads", "extracted");
+
+// Supported file extensions
+const SUPPORTED_EXTENSIONS = [".pdf", ".pptx", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".rtf", ".zip"];
+const SUPPORTED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "application/rtf",
+  "text/rtf",
+]);
+
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     try {
@@ -26,22 +45,27 @@ const storage = multer.diskStorage({
     }
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "") || ".pdf";
+    const ext = path.extname(file.originalname || "").toLowerCase() || ".bin";
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     cb(null, `${unique}${ext}`);
   },
 });
 
-const uploadPdf = multer({
+const uploadFile = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB
   fileFilter: (req, file, cb) => {
     const name = (file.originalname || "").toLowerCase();
-    if (name.endsWith(".pdf")) {
+    const ext = path.extname(name);
+    const mime = String(file.mimetype || "").toLowerCase();
+
+    if (SUPPORTED_EXTENSIONS.includes(ext) || SUPPORTED_MIME_TYPES.has(mime)) {
       cb(null, true);
       return;
     }
-    cb(new Error("Only PDF files are allowed"));
+
+    const typeLabel = ext || mime || "unknown";
+    cb(new Error(`Unsupported file type: ${typeLabel}. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}`));
   },
 });
 
@@ -440,6 +464,83 @@ const authenticate = (req, res, next) => {
   }
 };
 
+/**
+ * Helper: Extract ZIP file and return list of extracted file paths
+ */
+async function extractZipFile(zipPath) {
+  try {
+    const zipExtractDir = path.join(extractDir, `zip-${Date.now()}`);
+    await fs.mkdir(zipExtractDir, { recursive: true });
+    
+    await extractZip(zipPath, { dir: zipExtractDir });
+    
+    const files = [];
+    async function walkDir(dir) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walkDir(fullPath);
+        } else {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (SUPPORTED_EXTENSIONS.includes(ext)) {
+            files.push(fullPath);
+          }
+        }
+      }
+    }
+    
+    await walkDir(zipExtractDir);
+    return files;
+  } catch (err) {
+    console.error("Error extracting ZIP:", err);
+    throw err;
+  }
+}
+
+/**
+ * Helper: Process a single file and generate study materials
+ */
+async function processFileForStudyMaterials(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  
+  // Call Python script with file path - it will handle different formats
+  return generateStudyMaterials(filePath);
+}
+
+/**
+ * Helper: Process multiple files and generate study materials
+ */
+async function processMultipleFiles(filePaths) {
+  const allFlashcards = [];
+  const allQuiz = [];
+  const errors = [];
+  
+  for (const filePath of filePaths) {
+    try {
+      console.log(`Processing file: ${filePath}`);
+      const studySet = await processFileForStudyMaterials(filePath);
+      
+      if (studySet?.flashcards) {
+        allFlashcards.push(...studySet.flashcards);
+      }
+      if (studySet?.quiz) {
+        allQuiz.push(...studySet.quiz);
+      }
+    } catch (err) {
+      console.error(`Error processing file ${filePath}:`, err);
+      errors.push(err instanceof Error ? err.message : String(err));
+      // Continue with other files.
+    }
+  }
+  
+  return {
+    flashcards: allFlashcards,
+    quiz: allQuiz,
+    errors,
+  };
+}
+
 app.use("/api/community", createCommunityRouter(pool, authenticate));
 
 
@@ -516,7 +617,7 @@ app.post("/api/cards", async (req, res) => {
   }
 });
 
-app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), async (req, res) => {
+app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), async (req, res) => {
   const deckId = Number(req.params.id);
   const file = req.file;
 
@@ -525,8 +626,11 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
   }
 
   if (!file || !file.path) {
-    return res.status(400).json({ error: "No PDF file uploaded" });
+    return res.status(400).json({ error: "No file uploaded" });
   }
+
+  let filesToProcess = [file.path];
+  let tempDirs = [];
 
   try {
     const deckQ = await pool.query(
@@ -539,18 +643,48 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
       return res.status(404).json({ error: "Deck not found" });
     }
 
-    const studySet = await generateStudyMaterialsFromPdf(file.path);
+    // If ZIP file, extract and get list of supported files
+    if (file.originalname.toLowerCase().endsWith(".zip")) {
+      console.log("Processing ZIP file:", file.originalname);
+      const extractedFiles = await extractZipFile(file.path);
+      if (extractedFiles.length === 0) {
+        return res.status(422).json({
+          error: "No supported files found in ZIP archive",
+          supportedFormats: SUPPORTED_EXTENSIONS.join(", "),
+        });
+      }
+      filesToProcess = extractedFiles;
+      tempDirs.push(path.dirname(extractedFiles[0]));
+    }
+
+    // Process all files
+    const studySet = await processMultipleFiles(filesToProcess);
     const flashcards = normalizeFlashcards(studySet);
-    console.log("PDF import result", {
+    
+    console.log("File import result", {
       deckId,
+      filesProcessed: filesToProcess.length,
       rawFlashcards: Array.isArray(studySet?.flashcards) ? studySet.flashcards.length : 0,
       rawQuiz: Array.isArray(studySet?.quiz) ? studySet.quiz.length : 0,
       normalizedFlashcards: flashcards.length,
     });
 
     if (flashcards.length === 0) {
+      const noTextError = Array.isArray(studySet?.errors)
+        && studySet.errors.some((m) => String(m).includes("NO_EXTRACTABLE_TEXT"));
+
+      if (noTextError) {
+        return res.status(422).json({
+          error: "No extractable text found in uploaded file",
+          message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+          processingErrors: studySet.errors,
+          quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
+        });
+      }
+
       return res.status(422).json({
-        error: "No flashcards generated from PDF",
+        error: "No flashcards generated from uploaded files",
+        processingErrors: Array.isArray(studySet?.errors) ? studySet.errors : [],
         quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
       });
     }
@@ -596,7 +730,7 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
 
     const removedDuplicates = 0;
 
-    console.log("PDF import insert summary", {
+    console.log("File import insert summary", {
       deckId,
       inserted: insertedCards.length,
       skippedDuplicates,
@@ -610,14 +744,30 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
     });
   } catch (err) {
     console.error(err);
+    const errMsg = err instanceof Error ? err.message : "Unknown error";
+    if (errMsg.includes("NO_EXTRACTABLE_TEXT")) {
+      return res.status(422).json({
+        error: "No extractable text found in uploaded file",
+        message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+      });
+    }
+
     return res.status(500).json({
-      error: "Failed to import PDF",
-      message: err instanceof Error ? err.message : "Unknown error",
+      error: "Failed to import file(s)",
+      message: errMsg,
     });
   } finally {
+    // Clean up uploaded file
     try {
       await fs.unlink(file.path);
     } catch (_) {}
+    
+    // Clean up extracted directories
+    for (const dir of tempDirs) {
+      try {
+        await fs.rm(dir, { recursive: true, force: true });
+      } catch (_) {}
+    }
   }
 });
 
