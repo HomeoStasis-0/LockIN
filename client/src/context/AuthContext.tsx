@@ -23,7 +23,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const fetchUser = async () => {
     try {
-      const res = await fetch("http://localhost:8080/auth/me", {
+      const res = await fetch("/auth/me", {
         credentials: "include",
       });
       if (res.ok) {
@@ -46,7 +46,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const login = async (login: string, password: string) => {
-    const res = await fetch("http://localhost:8080/auth/login", {
+    const res = await fetch("/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -69,7 +69,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const register = async (username: string, email: string, password: string) => {
-    const res = await fetch("http://localhost:8080/auth/register", {
+    const res = await fetch("/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -80,7 +80,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = async () => {
-    await fetch("http://localhost:8080/auth/logout", {
+    await fetch("/auth/logout", {
       method: "POST",
       credentials: "include",
     });
