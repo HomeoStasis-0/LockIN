@@ -10,7 +10,7 @@ const cookieParser = require("cookie-parser");
 const multer = require("multer");
 const extractZip = require("extract-zip");
 const { updateCardDb } = require("./utils/spaced_repetition");
-const { generateStudyMaterials } = require("./services/aiService");
+const { generateStudyMaterials, generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
 
 
@@ -503,8 +503,13 @@ async function extractZipFile(zipPath) {
  */
 async function processFileForStudyMaterials(filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  
-  // Call Python script with file path - it will handle different formats
+
+  // Keep backward compatibility for PDF imports (tests and legacy code paths).
+  if (ext === ".pdf") {
+    return generateStudyMaterialsFromPdf(filePath);
+  }
+
+  // Other file types are handled by the unified processor.
   return generateStudyMaterials(filePath);
 }
 

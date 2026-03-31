@@ -107,6 +107,13 @@ def extract_text_from_pdf(pdf_path):
                     if words:
                         page_text = " ".join(w.get("text", "") for w in words if w.get("text"))
 
+                # Fallback: character stream extraction helps with some encoded PDFs
+                # where higher-level extractors return empty output.
+                if not page_text:
+                    chars = getattr(page, "chars", None) or []
+                    if chars:
+                        page_text = "".join(c.get("text", "") for c in chars if c.get("text"))
+
                 if page_text and page_text.strip():
                     full_text += page_text.strip() + "\n"
 
@@ -343,7 +350,7 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
         "properties": {
             "flashcards": {
                 "type": "array",
-                "minItems": 5,
+                "minItems": 1,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -356,7 +363,7 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
             },
             "quiz": {
                 "type": "array",
-                "minItems": 3,
+                "minItems": 0,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -378,6 +385,28 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
         "additionalProperties": False
     }
 
+    # Fallback schema for cases where the model repeatedly omits quiz output.
+    flashcards_only_schema = {
+        "type": "object",
+        "properties": {
+            "flashcards": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "front": {"type": "string"},
+                        "back": {"type": "string"}
+                    },
+                    "required": ["front", "back"],
+                    "additionalProperties": False
+                }
+            }
+        },
+        "required": ["flashcards"],
+        "additionalProperties": False
+    }
+
     try:
         prompt = (
             "Create concise, high-quality study materials from these notes. "
@@ -395,6 +424,7 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
         )
 
         last_err = None
+        # First attempt full schema (flashcards + quiz).
         for _ in range(2):
             try:
                 chat_completion = client.chat.completions.create(
@@ -422,6 +452,41 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
             except Exception as inner:
                 last_err = inner
 
+        # Second attempt: flashcards-only schema, then normalize quiz to an empty array.
+        for _ in range(2):
+            try:
+                chat_completion = client.chat.completions.create(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful study assistant. Return only schema-compliant JSON. "
+                            "Math must always be wrapped in $...$ or $$...$$.",
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                prompt
+                                + "\n\nIf quiz generation is uncertain, return only flashcards."
+                            ),
+                        },
+                    ],
+                    model="openai/gpt-oss-120b",
+                    temperature=0.0,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "study_set_flashcards_only",
+                            "strict": True,
+                            "schema": flashcards_only_schema,
+                        },
+                    },
+                )
+                parsed = json.loads(chat_completion.choices[0].message.content)
+                parsed["quiz"] = []
+                return ensure_math_in_study_set(parsed)
+            except Exception as inner:
+                last_err = inner
+
         raise last_err if last_err else RuntimeError("Unknown Groq generation error")
 
     except Exception as e:
@@ -434,14 +499,23 @@ def generate_study_material(context_text):
     print(f"Processing {len(chunks)} chunk(s).", file=sys.stderr)
 
     merged = {"flashcards": [], "quiz": []}
+    successful_chunks = 0
     for idx, chunk in enumerate(chunks):
         result = _generate_study_material_for_chunk(chunk, idx, len(chunks))
         if not result:
             continue
+        successful_chunks += 1
         merged["flashcards"].extend(result.get("flashcards", []))
         merged["quiz"].extend(result.get("quiz", []))
 
     merged = dedupe_study_set(merged)
+    if successful_chunks == 0 or (len(merged["flashcards"]) == 0 and len(merged["quiz"]) == 0):
+        print(
+            "NO_STUDY_MATERIALS: Model generation returned no usable flashcards or quiz.",
+            file=sys.stderr,
+        )
+        return None
+
     print(
         f"Generated {len(merged['flashcards'])} flashcards and {len(merged['quiz'])} quiz items.",
         file=sys.stderr,
