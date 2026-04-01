@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import type { DeckRow } from "../types/DeckTypes"; // probably should move this type to a more shared location
+import type { DeckRow } from "../types/DeckTypes"; 
+import type { PublicDeckRow } from "../types/CommunityTypes"
 import { publishDeck, unpublishDeck } from "../API/CommunityAPI";
 
 
@@ -78,31 +79,10 @@ export default function Dashboard() {
   const [publishingDeckId, setPublishingDeckId] = useState<number | null>(null);
   const [publishedDeckIds, setPublishedDeckIds] = useState<Record<number, boolean>>({});
 
-async function publishCourse(deckId: number) {
-  try {
-    setPublishingDeckId(deckId);
-    await publishDeck(deckId);
-    await loadDecks();
-    alert("Deck published successfully");
-  } catch (e) {
-    alert(e instanceof Error ? e.message : "Failed to publish deck");
-  } finally {
-    setPublishingDeckId(null);
-  }
-}
-
-async function unpublishCourse(deckId: number) {
-  try {
-    setPublishingDeckId(deckId);
-    await unpublishDeck(deckId);
-    await loadDecks();
-    alert("Deck unpublished successfully");
-  } catch (e) {
-    alert(e instanceof Error ? e.message : "Failed to unpublish deck");
-  } finally {
-    setPublishingDeckId(null);
-  }
-}
+  const[bkdecks, setbkDecks] = useState<PublicDeckRow[]>([]);
+  const [bkdecksLoading, setbkDecksLoading] = useState(false);
+  const [bkdecksError, setbkDecksError] = useState<string | null>(null);
+  const [unsaveDeckId, setunsaveDeckId] = useState<number | null>(null);
 
 
   // load decks once user is known
@@ -132,7 +112,22 @@ async function unpublishCourse(deckId: number) {
       }
     }
 
+    async function loadbkDecks() {
+      try {
+        setbkDecksLoading(true);
+        setbkDecksError(null);
+
+        const data = await api<PublicDeckRow[]>("/api/saved");
+        setbkDecks(data);
+      } catch (e) {
+        setbkDecksError(e instanceof Error ? e.message : "Failed to load bookmarked decks");
+      } finally {
+        setbkDecksLoading(false);
+      }
+    }
+
     loadDecks();
+    loadbkDecks();
     return () => {
       cancelled = true;
     };
@@ -191,6 +186,52 @@ async function unpublishCourse(deckId: number) {
       alert(e instanceof Error ? e.message : "Failed to delete deck");
     } finally {
       setDeletingDeckId(null);
+    }
+  }
+
+  async function publishCourse(deckId: number) {
+    try {
+      setPublishingDeckId(deckId);
+      await publishDeck(deckId);
+      setPublishedDeckIds((prev) => ({ ...prev, [deckId]: true }));
+      alert("Deck published");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to publish deck");
+    } finally {
+      setPublishingDeckId(null);
+    }
+  }
+
+  async function unpublishCourse(deckId: number) {
+    try {
+      setPublishingDeckId(deckId);
+      await unpublishDeck(deckId);
+      setPublishedDeckIds((prev) => ({ ...prev, [deckId]: false }));
+      alert("Deck unpublished");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to unpublish deck");
+    } finally {
+      setPublishingDeckId(null);
+    }
+  }
+
+  async function unsaveCourse(publicDeckId: number) {
+    try {
+      setunsaveDeckId(publicDeckId);
+
+      await api<{ saved: boolean; removed_cards: number }>(`/api/saved/${publicDeckId}`, {
+        method: "DELETE",
+      });
+
+      setbkDecks((prev) =>
+        prev.filter((deck) => deck.public_deck_id !== publicDeckId)
+      );
+
+      alert("Bookmark removed");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to remove bookmark");
+    } finally {
+      setunsaveDeckId(null);
     }
   }
 
@@ -322,6 +363,49 @@ async function unpublishCourse(deckId: number) {
                     className="px-4 py-2 bg-white border rounded text-red-600 border-red-300 hover:bg-red-50 transition disabled:opacity-60"
                   >
                     {deletingDeckId === d.id ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+        <section>
+          <h2 style={{ fontSize: 20, marginBottom: 12, fontWeight: 800 }}>
+            Bookmarked Courses
+          </h2>
+
+          {bkdecksLoading ? <div>Loading bookmarked decks…</div> : null}
+          {bkdecksError ? <div style={{ color: "crimson" }}>{bkdecksError}</div> : null}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+            {bkdecks.map((d) => (
+              <div
+                key={d.deck_id}
+                style={{
+                  padding: 16,
+                  borderRadius: 12,
+                  background: "white",
+                  boxShadow: "0 0 0 1px #e5e7eb inset",
+                }}
+              >
+                <div style={{ fontWeight: 800, marginBottom: 6 }}>{d.deck_name}</div>
+                <div style={{ color: "#6b7280", marginBottom: 10 }}>
+                  {d.subject ?? "—"}
+                  {d.course_number != null ? ` · ${d.course_number}` : ""}
+                </div>
+
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Link
+                    to={`/bookmarked/${d.public_deck_id}`}
+                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+                  >
+                    Open
+                  </Link>
+                  <button
+                    onClick={() => unsaveCourse(d.public_deck_id)}
+                    className="px-4 py-2 bg-white border rounded text-red-600 border-red-300 hover:bg-red-50 transition"
+                  >
+                    Remove Bookmark
                   </button>
                 </div>
               </div>

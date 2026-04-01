@@ -1,4 +1,5 @@
 const express = require("express");
+const { router } = require("../server");
 
 module.exports = function createCommunityRouter(pool, authenticate) {
   const router = express.Router();
@@ -151,42 +152,78 @@ router.get("/decks", authenticate, async (req, res) => {
   });
 
   // Save a public deck for the current user
-  router.post("/decks/:id/save", authenticate, async (req, res) => {
-    const publicDeckId = Number(req.params.id);
+router.post("/decks/:id/save", authenticate, async (req, res) => {
+  const publicDeckId = Number(req.params.id);
 
-    if (!Number.isFinite(publicDeckId)) {
-      return res.status(400).json({ error: "Invalid public deck id" });
+  if (!Number.isFinite(publicDeckId)) {
+    return res.status(400).json({ error: "Invalid public deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const publicDeckQ = await client.query(
+      `
+      SELECT
+        pd.id,
+        pd.deck_id
+      FROM public_deck pd
+      WHERE pd.id = $1
+      `,
+      [publicDeckId]
+    );
+
+    if (publicDeckQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Public deck not found" });
     }
 
-    try {
-      const publicDeckQ = await pool.query(
-        `
-        SELECT id
-        FROM public_deck
-        WHERE id = $1
-        `,
-        [publicDeckId]
-      );
+    const publicDeck = publicDeckQ.rows[0];
 
-      if (publicDeckQ.rowCount === 0) {
-        return res.status(404).json({ error: "Public deck not found" });
-      }
+    await client.query(
+      `
+      INSERT INTO user_public_deck (user_id, public_deck_id)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id, public_deck_id) DO NOTHING
+      `,
+      [req.user.user_id, publicDeckId]
+    );
 
-      await pool.query(
-        `
-        INSERT INTO user_public_deck (user_id, public_deck_id)
-        VALUES ($1, $2)
-        ON CONFLICT (user_id, public_deck_id) DO NOTHING
-        `,
-        [req.user.user_id, publicDeckId]
-      );
+    const insertedCardsQ = await client.query(
+      `
+      INSERT INTO user_public_card (
+        user_id,
+        public_deck_id,
+        card_id
+      )
+      SELECT
+        $1,
+        $2,
+        c.id
+      FROM card c
+      WHERE c.deck_id = $3
+      ON CONFLICT (user_id, public_deck_id, card_id) DO NOTHING
+      RETURNING id
+      `,
+      [req.user.user_id, publicDeckId, publicDeck.deck_id]
+    );
 
-      res.json({ saved: true });
-    } catch (err) {
-      console.error("POST /api/community/decks/:id/save error:", err);
-      res.status(500).json({ error: "Database error" });
-    }
-  });
+    await client.query("COMMIT");
+
+    res.json({
+      saved: true,
+      initialized_cards: insertedCardsQ.rowCount,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/community/decks/:id/save error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
 
   // Unsave a public deck for the current user
   router.delete("/decks/:id/save", authenticate, async (req, res) => {
@@ -216,6 +253,91 @@ router.get("/decks", authenticate, async (req, res) => {
       res.status(500).json({ error: "Database error" });
     }
   });
+
+  // copy a public dekc for the current user
+  router.post("/decks/:id/copy", authenticate, async (req, res) => {
+  const publicDeckId = Number(req.params.id);
+
+  if (!Number.isFinite(publicDeckId)) {
+    return res.status(400).json({ error: "Invalid public deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const sourceDeckQ = await client.query(
+      `
+      SELECT
+        pd.id AS public_deck_id,
+        pd.deck_id,
+        d.deck_name,
+        d.subject,
+        d.course_number,
+        d.instructor
+      FROM public_deck pd
+      JOIN deck d
+        ON d.id = pd.deck_id
+      WHERE pd.id = $1
+      `,
+      [publicDeckId]
+    );
+
+    if (sourceDeckQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Public deck not found" });
+    }
+
+    const sourceDeck = sourceDeckQ.rows[0];
+
+    const newDeckQ = await client.query(
+      `
+      INSERT INTO deck (user_id, deck_name, subject, course_number, instructor)
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at
+      `,
+      [
+        req.user.user_id,
+        sourceDeck.deck_name + " (Copy)",
+        sourceDeck.subject,
+        sourceDeck.course_number,
+        sourceDeck.instructor,
+      ]
+    );
+
+    const newDeck = newDeckQ.rows[0];
+
+    const copiedCardsQ = await client.query(
+      `
+      INSERT INTO card (deck_id, card_front, card_back)
+      SELECT
+        $1,
+        c.card_front,
+        c.card_back
+      FROM card c
+      WHERE c.deck_id = $2
+      RETURNING id
+      `,
+      [newDeck.id, sourceDeck.deck_id]
+    );
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      copied: true,
+      source_public_deck_id: publicDeckId,
+      new_deck: newDeck,
+      copied_cards: copiedCardsQ.rowCount,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("POST /api/community/decks/:id/copy error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
 
   return router;
 };

@@ -3,7 +3,7 @@ import AppShell from "../components/AppShell";
 import SearchBar from "../components/SearchBar";
 import ResultsGrid from "../components/ResultsGrid";
 import Pagination from "../components/Pagination";
-import { getPublicDecks, savePublicDeck } from "../API/CommunityAPI";
+import { getPublicDecks, savePublicDeck, copyPublicDeck } from "../API/CommunityAPI";
 import type { PublicDeckRow } from "../types/CommunityTypes";
 
 const PAGE_SIZE = 6;
@@ -39,9 +39,18 @@ export default function Community() {
   async function handleSave(publicDeckId: number) {
     try {
       await savePublicDeck(publicDeckId);
-      alert("Deck saved");
+      alert("Deck saved onto Dashboard");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to save deck");
+    }
+  }
+
+  async function handleCopy(publicDeckId: number) {
+    try {
+      await copyPublicDeck(publicDeckId);
+      alert("Deck Copied onto Dashboard");
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to copy deck");
     }
   }
 
@@ -80,6 +89,7 @@ export default function Community() {
         loading={loading}
         error={error}
         onSave={handleSave}
+        onCopy={handleCopy}
       />
 
       {!loading && !error && results.length > 0 && (

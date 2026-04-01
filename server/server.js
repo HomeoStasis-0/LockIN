@@ -924,6 +924,7 @@ app.post("/api/decks", authenticate, async (req, res) => {
   }
 });
 
+
 app.delete("/api/decks/:id", authenticate, async (req, res) => {
   const deckId = Number(req.params.id);
   if (!Number.isFinite(deckId)) {
@@ -1067,5 +1068,110 @@ app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
   }
 });
 
+// get bookmarked decks
+app.get("/api/saved", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        upd.id AS saved_id,
+        upd.user_id AS saved_by_user_id,
+        pd.id AS public_deck_id,
+        pd.deck_id,
+        pd.user_id,
+        pd.published_at,
+        d.deck_name,
+        d.subject,
+        d.course_number,
+        d.instructor,
+        d.created_at AS deck_created_at,
+        COUNT(c.id)::int AS card_count,
+        true AS is_saved
+      FROM user_public_deck upd
+      JOIN public_deck pd
+        ON pd.id = upd.public_deck_id
+      JOIN deck d
+        ON d.id = pd.deck_id
+      LEFT JOIN card c
+        ON c.deck_id = d.id
+      WHERE upd.user_id = $1
+      GROUP BY
+        upd.id,
+        upd.user_id,
+        pd.id,
+        pd.deck_id,
+        pd.user_id,
+        pd.published_at,
+        d.id
+      ORDER BY pd.published_at DESC
+      `,
+      [req.user.user_id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/saved error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// delete bookmark deck and cards
+app.delete("/api/saved/:id", authenticate, async (req, res) => {
+  const publicDeckId = Number(req.params.id);
+
+  if (!Number.isFinite(publicDeckId)) {
+    return res.status(400).json({ error: "Invalid public deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const savedQ = await client.query(
+      `
+      SELECT id
+      FROM user_public_deck
+      WHERE user_id = $1 AND public_deck_id = $2
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    if (savedQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Saved deck not found" });
+    }
+
+    const deleteCardsQ = await client.query(
+      `
+      DELETE FROM user_public_card
+      WHERE user_id = $1 AND public_deck_id = $2
+      RETURNING id
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM user_public_deck
+      WHERE user_id = $1 AND public_deck_id = $2
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      saved: false,
+      removed_cards: deleteCardsQ.rowCount,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("DELETE /api/saved/:id error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
 
 module.exports = app;
