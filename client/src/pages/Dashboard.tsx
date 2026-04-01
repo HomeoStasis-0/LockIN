@@ -43,6 +43,7 @@ function normalizeDeck(d: any): DeckRow {
     id: Number(d.id),
     user_id: Number(d.user_id),
     course_number: d.course_number == null ? null : Number(d.course_number),
+    is_published: Boolean(d.is_published),
   };
 }
 
@@ -77,11 +78,11 @@ export default function Dashboard() {
   const [publishingDeckId, setPublishingDeckId] = useState<number | null>(null);
   const [publishedDeckIds, setPublishedDeckIds] = useState<Record<number, boolean>>({});
 
-  async function publishCourse(deckId: number) {
+async function publishCourse(deckId: number) {
   try {
     setPublishingDeckId(deckId);
     await publishDeck(deckId);
-    setPublishedDeckIds((prev) => ({ ...prev, [deckId]: true }));
+    await loadDecks();
     alert("Deck published successfully");
   } catch (e) {
     alert(e instanceof Error ? e.message : "Failed to publish deck");
@@ -94,7 +95,7 @@ async function unpublishCourse(deckId: number) {
   try {
     setPublishingDeckId(deckId);
     await unpublishDeck(deckId);
-    setPublishedDeckIds((prev) => ({ ...prev, [deckId]: false }));
+    await loadDecks();
     alert("Deck unpublished successfully");
   } catch (e) {
     alert(e instanceof Error ? e.message : "Failed to unpublish deck");
@@ -102,6 +103,7 @@ async function unpublishCourse(deckId: number) {
     setPublishingDeckId(null);
   }
 }
+
 
   // load decks once user is known
   useEffect(() => {
@@ -117,11 +119,16 @@ async function unpublishCourse(deckId: number) {
         const data = await api<any[]>(`/api/decks`);
         const normalized = (data ?? []).map(normalizeDeck);
 
-        if (!cancelled) setDecks(normalized);
+        setDecks(normalized);
+        setPublishedDeckIds(
+          Object.fromEntries(
+            normalized.map((deck) => [deck.id, deck.is_published])
+          )
+        );
       } catch (e) {
-        if (!cancelled) setDecksError(e instanceof Error ? e.message : "Failed to load decks");
+        setDecksError(e instanceof Error ? e.message : "Failed to load decks");
       } finally {
-        if (!cancelled) setDecksLoading(false);
+        setDecksLoading(false);
       }
     }
 
@@ -153,6 +160,10 @@ async function unpublishCourse(deckId: number) {
       );
 
       setDecks((prev) => [created, ...prev]);
+      setPublishedDeckIds((prev) => ({
+        ...prev,
+        [created.id]: Boolean(created.is_published),
+      }));
       setNewId("");
       setNewTitle("");
       setAdding(false);
@@ -171,6 +182,11 @@ async function unpublishCourse(deckId: number) {
         method: "DELETE",
       });
       setDecks((prev) => prev.filter((d) => d.id !== deckId));
+      setPublishedDeckIds((prev) => {
+      const next = { ...prev };
+      delete next[deckId];
+      return next;
+    });
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to delete deck");
     } finally {

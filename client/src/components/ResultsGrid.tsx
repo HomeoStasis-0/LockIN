@@ -41,7 +41,7 @@ export default function ResultsGrid({
     <div className="mt-8 grid w-full grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {results.map((deck) => (
         <div
-          key={deck.id}
+          key={deck.public_deck_id}
           className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
         >
           <div className="flex items-start justify-between gap-3">
@@ -50,7 +50,7 @@ export default function ResultsGrid({
             </h2>
 
             <button
-              onClick={() => onSave?.(deck.id)}
+              onClick={() => onSave?.(deck.public_deck_id)}
               className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
             >
               Save
@@ -74,8 +74,8 @@ export default function ResultsGrid({
             </p>
 
             <p>
-              <span className="font-medium text-slate-700">Created:</span>{" "}
-              {new Date(deck.created_at).toLocaleDateString()}
+              <span className="font-medium text-slate-700">Published:</span>{" "}
+              {new Date(deck.published_at ?? deck.deck_created_at).toLocaleDateString()}
             </p>
           </div>
         </div>
