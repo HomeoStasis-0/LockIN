@@ -1,0 +1,53 @@
+import { render } from '@testing-library/react';
+import { expect, test } from 'vitest';
+
+import RichCardText from '../components/RichCardText';
+
+test('normalizes malformed arrow chains from AI output', () => {
+  const input =
+    'Identify an unpatched vulnerability $\\to exploit it \\\\to generate target list \\\\to infect hosts \\\\to$ repeat.';
+
+  const { container } = render(<RichCardText text={input} />);
+  const content = container.textContent ?? '';
+
+  expect(content).toContain('Identify an unpatched vulnerability');
+  expect(content).toContain('→ exploit it → generate target list → infect hosts → repeat.');
+  expect(content).not.toContain('\\to');
+  expect(content).not.toContain('$');
+});
+
+test('repairs malformed display math delimiters in theorem-style output', () => {
+  const input =
+    'For k = 1, ..., n,\n\n= \\max_{\\substack{S\\subset\\mathbb R^n \\ \\dim S = n-k+1}}\\min_{\\substack{x\\in S\\ x\\neq0}} \\frac{x^T A x}{x^T x}.$$';
+
+  const { container } = render(<RichCardText text={input} />);
+  const content = container.textContent ?? '';
+
+  expect(content).toContain('For k = 1, ..., n,');
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+});
+
+test('renders set-notation line with raw latex commands as math', () => {
+  const input =
+    'Why is the set A={f:[0,1]→\\mathbb R\\mid f(0)=0..if(t)-f(s)^4\\le t-s} compact in L^2[0,1]?';
+
+  const { container } = render(<RichCardText text={input} />);
+  const content = container.textContent ?? '';
+
+  expect(content).toContain('Why is the set');
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+});
+
+test('renders displaystyle/limit/integral chain without leaking latex commands', () => {
+  const input =
+    'For f ∈ L^p(μ) on a finite measure space, what is \\displaystyle\\lim_{n\\to\\infty}\\int |f|^{1/n}\\,d\\mu?';
+
+  const { container } = render(<RichCardText text={input} />);
+  const content = container.textContent ?? '';
+
+  expect(content).toContain('For f');
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+});
