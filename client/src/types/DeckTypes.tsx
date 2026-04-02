@@ -13,7 +13,8 @@ export type DeckRow = {
   subject: string | null;
   course_number: number | null;
   instructor: string | null;
-  created_at: string; 
+  created_at: string;
+  is_published: boolean;
 };
 
 export type CardRow = {

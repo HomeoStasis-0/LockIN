@@ -1,10 +1,14 @@
 import type { PublicDeckRow } from "../types/CommunityTypes";
+//import { useNavigate, Link } from "react-router-dom";
+
+
 
 type ResultsGridProps = {
   results: PublicDeckRow[];
   loading?: boolean;
   error?: string;
   onSave?: (publicDeckId: number) => void;
+  onCopy?: (publicDecckId: number) => void;
 };
 
 export default function ResultsGrid({
@@ -12,7 +16,9 @@ export default function ResultsGrid({
   loading = false,
   error = "",
   onSave,
+  onCopy,
 }: ResultsGridProps) {
+
   if (loading) {
     return (
       <div className="mt-8 text-center text-slate-500">
@@ -41,7 +47,7 @@ export default function ResultsGrid({
     <div className="mt-8 grid w-full grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
       {results.map((deck) => (
         <div
-          key={deck.id}
+          key={deck.public_deck_id}
           className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
         >
           <div className="flex items-start justify-between gap-3">
@@ -50,10 +56,16 @@ export default function ResultsGrid({
             </h2>
 
             <button
-              onClick={() => onSave?.(deck.id)}
+              onClick={() => onSave?.(deck.public_deck_id)}
               className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
             >
-              Save
+              Bookmark
+            </button>
+            <button
+              onClick={() => onCopy?.(deck.public_deck_id)}
+              className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+            >
+              Copy
             </button>
           </div>
 
@@ -74,8 +86,8 @@ export default function ResultsGrid({
             </p>
 
             <p>
-              <span className="font-medium text-slate-700">Created:</span>{" "}
-              {new Date(deck.created_at).toLocaleDateString()}
+              <span className="font-medium text-slate-700">Published:</span>{" "}
+              {new Date(deck.deck_created_at).toLocaleDateString()}
             </p>
           </div>
         </div>

@@ -75,3 +75,12 @@ export async function unpublishDeck(
     method: "DELETE",
   });
 }
+
+export async function copyPublicDeck(
+  publicDeckId: number
+): Promise<{ copied: boolean }> {
+    return api<{ copied: boolean }>(`/api/community/decks/${publicDeckId}/copy`, {
+    method: "POST",
+  });
+}
+
