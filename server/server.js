@@ -309,7 +309,7 @@ function isLikelyDuplicateCard(candidate, existingSignatures) {
 
 const corsOptions = {
   origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
-  credentials: true 
+  credentials: true
 }
 
 app.use(cors(corsOptions));
@@ -317,9 +317,16 @@ app.use(express.json());
 app.use(cookieParser());
 
 // NOTE: production static serving moved to after API routes so API endpoints work
+const connectionString = process.env.DATABASE_URL;
+const dbSslMode = String(process.env.DB_SSL ?? "").toLowerCase();
+const isLocalDb = /localhost|127\.0\.0\.1/i.test(connectionString ?? "");
+const useDbSsl =
+  dbSslMode === "true" ||
+  (!isLocalDb && process.env.NODE_ENV === "production");
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString,
+  ...(useDbSsl ? { ssl: { rejectUnauthorized: false } } : {}),
 });
 
 // Test route using database
@@ -443,7 +450,7 @@ const authenticate = (req, res, next) => {
 app.use("/api/community", createCommunityRouter(pool, authenticate));
 
 
-// React checks login 
+// React checks login
 app.get("/auth/me", authenticate, async (req, res) => {
   const result = await pool.query(
     `SELECT user_id, username, email
@@ -459,6 +466,93 @@ app.get("/auth/me", authenticate, async (req, res) => {
 app.post("/auth/logout", (req, res) => {
   res.clearCookie("token");
   res.json({ message: "Logged out" });
+});
+
+app.patch("/auth/password", authenticate, async (req, res) => {
+  const currentPassword = req.body?.currentPassword;
+  const newPassword = req.body?.newPassword;
+
+  if (typeof currentPassword !== "string" || currentPassword.length === 0) {
+    return res.status(400).json({ error: "currentPassword is required" });
+  }
+
+  if (typeof newPassword !== "string" || newPassword.length === 0) {
+    return res.status(400).json({ error: "newPassword is required" });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: "newPassword must be at least 8 characters long" });
+  }
+
+  try {
+    const userQ = await pool.query(
+      `SELECT user_id, password_hash
+       FROM users
+       WHERE user_id = $1`,
+      [req.user.user_id]
+    );
+
+    if (userQ.rowCount === 0) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    const user = userQ.rows[0];
+    const currentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+
+    if (!currentPasswordValid) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    const updateQ = await pool.query(
+      `UPDATE users
+       SET password_hash = $1
+       WHERE user_id = $2
+       RETURNING user_id`,
+      [hashedPassword, req.user.user_id]
+    );
+
+    if (updateQ.rowCount === 0) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    return res.json({ message: "Password updated successfully" });
+  } catch (err) {
+    console.error("PATCH /auth/password error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.delete("/auth/account", authenticate, async (req, res) => {
+  const confirmation = req.body?.confirmation;
+
+  if (typeof confirmation !== "string" || confirmation.length === 0) {
+    return res.status(400).json({ error: "confirmation is required" });
+  }
+
+  if (confirmation !== req.user.username) {
+    return res.status(400).json({ error: "Confirmation does not match username" });
+  }
+
+  try {
+    const deleteQ = await pool.query(
+      `DELETE FROM users
+       WHERE user_id = $1
+       RETURNING user_id`,
+      [req.user.user_id]
+    );
+
+    if (deleteQ.rowCount === 0) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    res.clearCookie("token");
+    return res.json({ message: "Account deleted successfully" });
+  } catch (err) {
+    console.error("DELETE /auth/account error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
 });
 
 app.get("/api/decks/:id", async (req, res) => {
