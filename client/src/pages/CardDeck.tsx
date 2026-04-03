@@ -145,26 +145,26 @@ export default function DeckUI({ deckId }: { deckId: number }) {
       </nav>
 
       <main style={styles.main}>
-        {tab === "learn" ? (
+        <div style={{ display: tab === "learn" ? "block" : "none" }} aria-hidden={tab !== "learn"}>
           <LearnView
             cards={deck.cards}
             onEdit={upsertCard}
             onRemove={removeCard}
             onToggleReviewPile={toggleReviewPile}
           />
-        ) : null}
+        </div>
 
-        {tab === "review" ? (
+        <div style={{ display: tab === "review" ? "block" : "none" }} aria-hidden={tab !== "review"}>
           <ReviewView cards={deck.cards} onRate={handleRateCard} onEdit={upsertCard} />
-        ) : null}
+        </div>
 
-        {tab === "add" ? (
+        <div style={{ display: tab === "add" ? "block" : "none" }} aria-hidden={tab !== "add"}>
           <AddView
             deckId={deck.id}
             onCreate={handleCreateCard}
             onImportPdf={handleImportPdf}
           />
-        ) : null}
+        </div>
       </main>
     </div>
   );

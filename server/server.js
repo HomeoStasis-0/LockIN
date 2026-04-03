@@ -9,8 +9,9 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const multer = require("multer");
+const extractZip = require("extract-zip");
 const { updateCardDb } = require("./utils/spaced_repetition");
-const { generateStudyMaterialsFromPdf } = require("./services/aiService");
+const { generateStudyMaterials, generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
 
 const multer = require("multer");
@@ -22,6 +23,24 @@ const createCommunityRouter = require("./routes/community");
 const app = express();
 
 const uploadDir = path.join(__dirname, "..", "uploads");
+const extractDir = path.join(__dirname, "..", "uploads", "extracted");
+
+// Supported file extensions
+const SUPPORTED_EXTENSIONS = [".pdf", ".pptx", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".rtf", ".zip"];
+const SUPPORTED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "application/rtf",
+  "text/rtf",
+]);
+
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
     try {
@@ -32,22 +51,27 @@ const storage = multer.diskStorage({
     }
   },
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname || "") || ".pdf";
+    const ext = path.extname(file.originalname || "").toLowerCase() || ".bin";
     const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     cb(null, `${unique}${ext}`);
   },
 });
 
-const uploadPdf = multer({
+const uploadFile = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB
   fileFilter: (req, file, cb) => {
     const name = (file.originalname || "").toLowerCase();
-    if (name.endsWith(".pdf")) {
+    const ext = path.extname(name);
+    const mime = String(file.mimetype || "").toLowerCase();
+
+    if (SUPPORTED_EXTENSIONS.includes(ext) || SUPPORTED_MIME_TYPES.has(mime)) {
       cb(null, true);
       return;
     }
-    cb(new Error("Only PDF files are allowed"));
+
+    const typeLabel = ext || mime || "unknown";
+    cb(new Error(`Unsupported file type: ${typeLabel}. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}`));
   },
 });
 
@@ -745,6 +769,88 @@ const authenticate = (req, res, next) => {
   }
 };
 
+/**
+ * Helper: Extract ZIP file and return list of extracted file paths
+ */
+async function extractZipFile(zipPath) {
+  try {
+    const zipExtractDir = path.join(extractDir, `zip-${Date.now()}`);
+    await fs.mkdir(zipExtractDir, { recursive: true });
+    
+    await extractZip(zipPath, { dir: zipExtractDir });
+    
+    const files = [];
+    async function walkDir(dir) {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walkDir(fullPath);
+        } else {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (SUPPORTED_EXTENSIONS.includes(ext)) {
+            files.push(fullPath);
+          }
+        }
+      }
+    }
+    
+    await walkDir(zipExtractDir);
+    return files;
+  } catch (err) {
+    console.error("Error extracting ZIP:", err);
+    throw err;
+  }
+}
+
+/**
+ * Helper: Process a single file and generate study materials
+ */
+async function processFileForStudyMaterials(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+
+  // Keep backward compatibility for PDF imports (tests and legacy code paths).
+  if (ext === ".pdf") {
+    return generateStudyMaterialsFromPdf(filePath);
+  }
+
+  // Other file types are handled by the unified processor.
+  return generateStudyMaterials(filePath);
+}
+
+/**
+ * Helper: Process multiple files and generate study materials
+ */
+async function processMultipleFiles(filePaths) {
+  const allFlashcards = [];
+  const allQuiz = [];
+  const errors = [];
+  
+  for (const filePath of filePaths) {
+    try {
+      console.log(`Processing file: ${filePath}`);
+      const studySet = await processFileForStudyMaterials(filePath);
+      
+      if (studySet?.flashcards) {
+        allFlashcards.push(...studySet.flashcards);
+      }
+      if (studySet?.quiz) {
+        allQuiz.push(...studySet.quiz);
+      }
+    } catch (err) {
+      console.error(`Error processing file ${filePath}:`, err);
+      errors.push(err instanceof Error ? err.message : String(err));
+      // Continue with other files.
+    }
+  }
+  
+  return {
+    flashcards: allFlashcards,
+    quiz: allQuiz,
+    errors,
+  };
+}
+
 app.use("/api/community", createCommunityRouter(pool, authenticate));
 
 
@@ -908,7 +1014,7 @@ app.post("/api/cards", async (req, res) => {
   }
 });
 
-app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), async (req, res) => {
+app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), async (req, res) => {
   const deckId = Number(req.params.id);
   const file = req.file;
 
@@ -917,8 +1023,11 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
   }
 
   if (!file || !file.path) {
-    return res.status(400).json({ error: "No PDF file uploaded" });
+    return res.status(400).json({ error: "No file uploaded" });
   }
+
+  let filesToProcess = [file.path];
+  let tempDirs = [];
 
   try {
     const deckQ = await pool.query(
@@ -931,18 +1040,48 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
       return res.status(404).json({ error: "Deck not found" });
     }
 
-    const studySet = await generateStudyMaterialsFromPdf(file.path);
+    // If ZIP file, extract and get list of supported files
+    if (file.originalname.toLowerCase().endsWith(".zip")) {
+      console.log("Processing ZIP file:", file.originalname);
+      const extractedFiles = await extractZipFile(file.path);
+      if (extractedFiles.length === 0) {
+        return res.status(422).json({
+          error: "No supported files found in ZIP archive",
+          supportedFormats: SUPPORTED_EXTENSIONS.join(", "),
+        });
+      }
+      filesToProcess = extractedFiles;
+      tempDirs.push(path.dirname(extractedFiles[0]));
+    }
+
+    // Process all files
+    const studySet = await processMultipleFiles(filesToProcess);
     const flashcards = normalizeFlashcards(studySet);
-    console.log("PDF import result", {
+    
+    console.log("File import result", {
       deckId,
+      filesProcessed: filesToProcess.length,
       rawFlashcards: Array.isArray(studySet?.flashcards) ? studySet.flashcards.length : 0,
       rawQuiz: Array.isArray(studySet?.quiz) ? studySet.quiz.length : 0,
       normalizedFlashcards: flashcards.length,
     });
 
     if (flashcards.length === 0) {
+      const noTextError = Array.isArray(studySet?.errors)
+        && studySet.errors.some((m) => String(m).includes("NO_EXTRACTABLE_TEXT"));
+
+      if (noTextError) {
+        return res.status(422).json({
+          error: "No extractable text found in uploaded file",
+          message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+          processingErrors: studySet.errors,
+          quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
+        });
+      }
+
       return res.status(422).json({
-        error: "No flashcards generated from PDF",
+        error: "No flashcards generated from uploaded files",
+        processingErrors: Array.isArray(studySet?.errors) ? studySet.errors : [],
         quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
       });
     }
@@ -988,7 +1127,7 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
 
     const removedDuplicates = 0;
 
-    console.log("PDF import insert summary", {
+    console.log("File import insert summary", {
       deckId,
       inserted: insertedCards.length,
       skippedDuplicates,
@@ -1002,14 +1141,30 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadPdf.single("pdf"), asy
     });
   } catch (err) {
     console.error(err);
+    const errMsg = err instanceof Error ? err.message : "Unknown error";
+    if (errMsg.includes("NO_EXTRACTABLE_TEXT")) {
+      return res.status(422).json({
+        error: "No extractable text found in uploaded file",
+        message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+      });
+    }
+
     return res.status(500).json({
-      error: "Failed to import PDF",
-      message: err instanceof Error ? err.message : "Unknown error",
+      error: "Failed to import file(s)",
+      message: errMsg,
     });
   } finally {
+    // Clean up uploaded file
     try {
       await fs.unlink(file.path);
     } catch (_) {}
+    
+    // Clean up extracted directories
+    for (const dir of tempDirs) {
+      try {
+        await fs.rm(dir, { recursive: true, force: true });
+      } catch (_) {}
+    }
   }
 });
 
@@ -1103,16 +1258,32 @@ app.delete("/api/cards/:id", async (req, res) => {
 
 app.get("/api/decks", authenticate, async (req, res) => {
   try {
-    const q = await pool.query(
-      `SELECT id, user_id, deck_name, subject, course_number, instructor, created_at
-       FROM deck
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
+    const result = await pool.query(
+      `
+      SELECT
+        d.id,
+        d.user_id,
+        d.deck_name,
+        d.subject,
+        d.course_number,
+        d.instructor,
+        d.created_at,
+        CASE
+          WHEN pd.id IS NOT NULL THEN true
+          ELSE false
+        END AS is_published
+      FROM deck d
+      LEFT JOIN public_deck pd
+        ON pd.deck_id = d.id
+      WHERE d.user_id = $1
+      ORDER BY d.created_at DESC
+      `,
       [req.user.user_id]
     );
-    res.json(q.rows);
+
+    res.json(result.rows);
   } catch (err) {
-    console.error(err);
+    console.error("GET /api/decks error:", err);
     res.status(500).json({ error: "Database error" });
   }
 });
@@ -1144,6 +1315,7 @@ app.post("/api/decks", authenticate, async (req, res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
 
 app.delete("/api/decks/:id", authenticate, async (req, res) => {
   const deckId = Number(req.params.id);
@@ -1209,14 +1381,10 @@ app.post("/api/decks/:id/publish", authenticate, async (req, res) => {
     return res.status(400).json({ error: "Invalid deck id" });
   }
 
-  const client = await pool.connect();
-
   try {
-    await client.query("BEGIN");
-
-    const deckQ = await client.query(
+    const deckQ = await pool.query(
       `
-      SELECT id, user_id, deck_name, subject, course_number, instructor
+      SELECT id, user_id
       FROM deck
       WHERE id = $1 AND user_id = $2
       `,
@@ -1224,77 +1392,30 @@ app.post("/api/decks/:id/publish", authenticate, async (req, res) => {
     );
 
     if (deckQ.rowCount === 0) {
-      await client.query("ROLLBACK");
       return res.status(404).json({ error: "Deck not found or not owned by user" });
     }
 
-    const deck = deckQ.rows[0];
-
-    const existingQ = await client.query(
+    const publicDeckQ = await pool.query(
       `
-      SELECT id
-      FROM public_deck
-      WHERE user_id = $1 AND deck_name = $2 AND course_number IS NOT DISTINCT FROM $3
+      INSERT INTO public_deck (deck_id, user_id)
+      VALUES ($1, $2)
+      ON CONFLICT (deck_id) DO NOTHING
+      RETURNING id, deck_id, user_id, published_at
       `,
-      [deck.user_id, deck.deck_name, deck.course_number]
+      [deckId, req.user.user_id]
     );
 
-    if (existingQ.rowCount > 0) {
-      await client.query("ROLLBACK");
+    if (publicDeckQ.rowCount === 0) {
       return res.status(409).json({ error: "Deck is already public" });
     }
 
-    const publicDeckQ = await client.query(
-      `
-      INSERT INTO public_deck (user_id, deck_name, subject, course_number, instructor)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at
-      `,
-      [
-        deck.user_id,
-        deck.deck_name,
-        deck.subject,
-        deck.course_number,
-        deck.instructor,
-      ]
-    );
-
-    const publicDeck = publicDeckQ.rows[0];
-
-    const cardsQ = await client.query(
-      `
-      SELECT id
-      FROM card
-      WHERE deck_id = $1
-      ORDER BY id
-      `,
-      [deckId]
-    );
-
-    for (const row of cardsQ.rows) {
-      await client.query(
-        `
-        INSERT INTO public_deck_card (public_deck_id, card_id)
-        VALUES ($1, $2)
-        ON CONFLICT (public_deck_id, card_id) DO NOTHING
-        `,
-        [publicDeck.id, row.id]
-      );
-    }
-
-    await client.query("COMMIT");
-
     res.status(201).json({
       message: "Deck made public",
-      public_deck: publicDeck,
-      linked_cards: cardsQ.rowCount,
+      public_deck: publicDeckQ.rows[0],
     });
   } catch (err) {
-    await client.query("ROLLBACK");
     console.error("POST /api/decks/:id/publish error:", err);
     res.status(500).json({ error: "Database error" });
-  } finally {
-    client.release();
   }
 });
 
@@ -1308,7 +1429,7 @@ app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
   try {
     const deckQ = await pool.query(
       `
-      SELECT id, user_id, deck_name, course_number
+      SELECT id, user_id
       FROM deck
       WHERE id = $1 AND user_id = $2
       `,
@@ -1319,17 +1440,13 @@ app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
       return res.status(404).json({ error: "Deck not found or not owned by user" });
     }
 
-    const deck = deckQ.rows[0];
-
     const deleteQ = await pool.query(
       `
       DELETE FROM public_deck
-      WHERE user_id = $1
-        AND deck_name = $2
-        AND course_number IS NOT DISTINCT FROM $3
+      WHERE deck_id = $1 AND user_id = $2
       RETURNING id
       `,
-      [deck.user_id, deck.deck_name, deck.course_number]
+      [deckId, req.user.user_id]
     );
 
     if (deleteQ.rowCount === 0) {
@@ -1343,5 +1460,110 @@ app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
   }
 });
 
+// get bookmarked decks
+app.get("/api/saved", authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        upd.id AS saved_id,
+        upd.user_id AS saved_by_user_id,
+        pd.id AS public_deck_id,
+        pd.deck_id,
+        pd.user_id,
+        pd.published_at,
+        d.deck_name,
+        d.subject,
+        d.course_number,
+        d.instructor,
+        d.created_at AS deck_created_at,
+        COUNT(c.id)::int AS card_count,
+        true AS is_saved
+      FROM user_public_deck upd
+      JOIN public_deck pd
+        ON pd.id = upd.public_deck_id
+      JOIN deck d
+        ON d.id = pd.deck_id
+      LEFT JOIN card c
+        ON c.deck_id = d.id
+      WHERE upd.user_id = $1
+      GROUP BY
+        upd.id,
+        upd.user_id,
+        pd.id,
+        pd.deck_id,
+        pd.user_id,
+        pd.published_at,
+        d.id
+      ORDER BY pd.published_at DESC
+      `,
+      [req.user.user_id]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/saved error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// delete bookmark deck and cards
+app.delete("/api/saved/:id", authenticate, async (req, res) => {
+  const publicDeckId = Number(req.params.id);
+
+  if (!Number.isFinite(publicDeckId)) {
+    return res.status(400).json({ error: "Invalid public deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const savedQ = await client.query(
+      `
+      SELECT id
+      FROM user_public_deck
+      WHERE user_id = $1 AND public_deck_id = $2
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    if (savedQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Saved deck not found" });
+    }
+
+    const deleteCardsQ = await client.query(
+      `
+      DELETE FROM user_public_card
+      WHERE user_id = $1 AND public_deck_id = $2
+      RETURNING id
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    await client.query(
+      `
+      DELETE FROM user_public_deck
+      WHERE user_id = $1 AND public_deck_id = $2
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      saved: false,
+      removed_cards: deleteCardsQ.rowCount,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("DELETE /api/saved/:id error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
 
 module.exports = app;

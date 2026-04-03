@@ -1,6 +1,6 @@
 /**
  * AI client for LockIN backend.
- * Spawns the Python pdf_to_quiz.py script to extract text from PDFs
+ * Spawns the Python file_processor.py script to extract text from various file formats
  * and generate flashcards + quiz questions via Groq.
  *
  * @module ai_client
@@ -10,12 +10,20 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-/** Path to pdf_to_quiz.py (project root) */
+/** Path to file_processor.py (project root) */
+const FILE_PROCESSOR_PATH = path.join(__dirname, "..", "python", "file_processor.py");
 const PDF_TO_QUIZ_PATH = path.join(__dirname, "..", "python", "pdf_to_quiz.py");
 
 function resolvePythonBin() {
+  const projectVenvPython = path.join(__dirname, '..', '..', 'venv', 'bin', 'python');
+  const activeVenvPython = process.env.VIRTUAL_ENV
+    ? path.join(process.env.VIRTUAL_ENV, 'bin', 'python')
+    : null;
+
   const candidates = [
     process.env.PYTHON_BIN,
+    activeVenvPython,
+    projectVenvPython,
     '/usr/local/bin/python3',
     '/opt/homebrew/bin/python3',
     'python3',
@@ -32,17 +40,19 @@ function resolvePythonBin() {
 const PYTHON_BIN = resolvePythonBin();
 
 /**
- * Generate study materials (flashcards + quiz) from a PDF file.
+ * Generate study materials (flashcards + quiz) from a file.
+ * Supports PDF, PPTX, DOCX, TXT, MD, CSV, JSON, RTF and other text-based formats.
  *
- * @param {string} pdfPath - Absolute path to the PDF file
+ * @param {string} filePath - Absolute path to the file
  * @returns {Promise<{ flashcards: Array<{front,back}>, quiz: Array<{question,options,correct_answer}> }>}
  * @throws {Error} If Python fails or output is invalid
  */
-async function generateFromPdf(pdfPath) {
+async function generateFromFile(filePath) {
   return new Promise((resolve, reject) => {
-    const py = spawn(PYTHON_BIN, [PDF_TO_QUIZ_PATH, pdfPath], {
-      cwd: path.dirname(PDF_TO_QUIZ_PATH),
+    const py = spawn(PYTHON_BIN, [FILE_PROCESSOR_PATH, filePath], {
+      cwd: path.dirname(FILE_PROCESSOR_PATH),
       env: { ...process.env },
+      timeout: 300000, // 5 minutes
     });
 
     let stdout = '';
@@ -53,7 +63,12 @@ async function generateFromPdf(pdfPath) {
 
     py.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`pdf_to_quiz.py exited ${code}: ${stderr || 'Unknown error'}`));
+        const details = String(stderr || '').trim();
+        if (details.includes('NO_EXTRACTABLE_TEXT')) {
+          reject(new Error('NO_EXTRACTABLE_TEXT: Uploaded file has no extractable text (likely scanned/image-only).'));
+          return;
+        }
+        reject(new Error(`file_processor.py exited ${code}: ${details || 'Unknown error'}`));
         return;
       }
       try {
@@ -74,4 +89,47 @@ async function generateFromPdf(pdfPath) {
   });
 }
 
-module.exports = { generateFromPdf };
+/**
+ * Backward compatibility: PDF-specific function (deprecated)
+ * @deprecated Use generateFromFile instead
+ */
+async function generateFromPdf(pdfPath) {
+  return new Promise((resolve, reject) => {
+    const py = spawn(PYTHON_BIN, [PDF_TO_QUIZ_PATH, pdfPath], {
+      cwd: path.dirname(PDF_TO_QUIZ_PATH),
+      env: { ...process.env },
+      timeout: 300000, // 5 minutes
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    py.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    py.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    py.on('close', (code) => {
+      if (code !== 0) {
+        const details = String(stderr || '').trim();
+        reject(new Error(`pdf_to_quiz.py exited ${code}: ${details || 'Unknown error'}`));
+        return;
+      }
+
+      try {
+        const data = JSON.parse(stdout.trim());
+        if (!data.flashcards || !data.quiz) {
+          reject(new Error('Invalid output: missing flashcards or quiz'));
+          return;
+        }
+        resolve(data);
+      } catch (e) {
+        reject(new Error(`Failed to parse Python output: ${e.message}`));
+      }
+    });
+
+    py.on('error', (err) => {
+      reject(new Error(`Failed to spawn Python: ${err.message}`));
+    });
+  });
+}
+
+module.exports = { generateFromFile, generateFromPdf };

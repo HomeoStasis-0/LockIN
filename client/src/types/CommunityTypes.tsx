@@ -1,11 +1,17 @@
 export type PublicDeckRow = {
-  id: number;
+  saved_id?: number;
+  saved_by_user_id?: number;
+  public_deck_id: number;
+  deck_id: number;
   user_id: number;
+  published_at: string;
   deck_name: string;
   subject: string | null;
   course_number: number | null;
   instructor: string | null;
-  created_at: string;
+  deck_created_at: string;
+  card_count: number;
+  is_saved: boolean;
 };
 
 export type PublicDeckCardRow = {

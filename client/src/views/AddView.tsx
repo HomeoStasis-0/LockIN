@@ -1,6 +1,33 @@
 import { useRef, useState } from "react";
 import { styles } from "../styles/DeckStyles";
 
+const SUPPORTED_EXTENSIONS = new Set([
+  ".pdf",
+  ".pptx",
+  ".docx",
+  ".txt",
+  ".md",
+  ".markdown",
+  ".csv",
+  ".json",
+  ".rtf",
+  ".zip",
+]);
+
+const SUPPORTED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "application/json",
+  "application/rtf",
+  "text/rtf",
+]);
+
 export default function AddView(props: {
   deckId: number;
   onCreate: (front: string, back: string) => Promise<void> | void;
@@ -30,8 +57,14 @@ export default function AddView(props: {
     setUploadMsg(null);
     setUploadErr(null);
 
-    if (!file.name.toLowerCase().endsWith(".pdf")) {
-      setUploadErr("Please choose a PDF file.");
+    const lowerName = file.name.toLowerCase();
+    const dotIndex = lowerName.lastIndexOf(".");
+    const ext = dotIndex >= 0 ? lowerName.slice(dotIndex) : "";
+    const mime = String(file.type || "").toLowerCase();
+    const supported = SUPPORTED_EXTENSIONS.has(ext) || SUPPORTED_MIME_TYPES.has(mime);
+
+    if (!supported) {
+      setUploadErr("Unsupported file. Use PDF, PPTX, DOCX, TXT, MD, CSV, JSON, RTF, or ZIP.");
       e.target.value = "";
       return;
     }
@@ -48,7 +81,7 @@ export default function AddView(props: {
         setUploadMsg(`Imported ${result.inserted} flashcards from ${file.name}.`);
       }
     } catch (err) {
-      setUploadErr(err instanceof Error ? err.message : "Failed to import PDF.");
+      setUploadErr(err instanceof Error ? err.message : "Failed to import file.");
     } finally {
       setIsUploading(false);
       e.target.value = "";
@@ -83,14 +116,14 @@ export default function AddView(props: {
         </div>
 
         <div style={styles.panel}>
-          <div style={styles.h3}>Import from PDF</div>
+          <div style={styles.h3}>Import from File</div>
           <div style={styles.muted}>
-            Upload a PDF with questions or notes and generate flashcards automatically.
+            Upload PDF, PPTX, DOCX, TXT, MD, CSV, JSON, RTF, or ZIP to generate flashcards.
           </div>
           <input
             ref={fileRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept=".pdf,.pptx,.docx,.txt,.md,.markdown,.csv,.json,.rtf,.zip,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown,text/csv,application/json,application/rtf,text/rtf,application/zip"
             onChange={handlePdfChange}
             style={{ display: "none" }}
           />
@@ -99,7 +132,7 @@ export default function AddView(props: {
             onClick={() => fileRef.current?.click()}
             disabled={isUploading}
           >
-            {isUploading ? "Importing..." : "Upload PDF"}
+            {isUploading ? "Importing..." : "Upload File"}
           </button>
           {uploadMsg ? <div style={{ ...styles.muted, marginTop: 10 }}>{uploadMsg}</div> : null}
           {uploadErr ? <div style={{ ...styles.muted, marginTop: 10, color: "#dc2626" }}>{uploadErr}</div> : null}
