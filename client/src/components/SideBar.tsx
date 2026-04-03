@@ -81,9 +81,17 @@ export default function SideBar() {
         </div>
 
         <div className="mt-auto border-t pt-4">
-          <button
-            className={`flex items-center rounded-xl px-3 py-2 text-gray-700 hover:bg-gray-100 transition w-full
-              ${expanded ? "gap-3 justify-start" : "justify-center px-2"}`}
+          <NavLink
+            to="/account"
+            className={({ isActive }) =>
+              `flex items-center rounded-xl py-2 transition w-full
+              ${expanded ? "gap-3 px-3 justify-start" : "justify-center px-2"}
+              ${
+                isActive
+                  ? "bg-blue-100 text-blue-700 font-semibold"
+                  : "text-gray-700 hover:bg-gray-100"
+              }`
+            }
           >
             <CircleUserRound size={18} />
             <span
@@ -92,7 +100,7 @@ export default function SideBar() {
             >
               Account
             </span>
-          </button>
+          </NavLink>
         </div>
       </div>
     </aside>
