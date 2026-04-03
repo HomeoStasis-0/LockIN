@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs").promises;
+const fs = require("fs").promises;
 const { Pool } = require("pg");
 require("dotenv").config();
 const bcrypt = require("bcryptjs");
@@ -12,8 +13,305 @@ const { updateCardDb } = require("./utils/spaced_repetition");
 const { generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
 
+const multer = require("multer");
+const { updateCardDb } = require("./utils/spaced_repetition");
+const { generateStudyMaterialsFromPdf } = require("./services/aiService");
+const createCommunityRouter = require("./routes/community");
+
 
 const app = express();
+
+const uploadDir = path.join(__dirname, "..", "uploads");
+const storage = multer.diskStorage({
+  destination: async (req, file, cb) => {
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+      cb(null, uploadDir);
+    } catch (err) {
+      cb(err);
+    }
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname || "") || ".pdf";
+    const unique = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    cb(null, `${unique}${ext}`);
+  },
+});
+
+const uploadPdf = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const name = (file.originalname || "").toLowerCase();
+    if (name.endsWith(".pdf")) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("Only PDF files are allowed"));
+  },
+});
+
+function normalizeFlashcards(studySet) {
+  const rawCards = Array.isArray(studySet?.flashcards) ? studySet.flashcards : [];
+  const quiz = Array.isArray(studySet?.quiz) ? studySet.quiz : [];
+
+  const cardsFromFlashcards = rawCards
+    .map((card) => {
+      const front = String(
+        card?.front ?? card?.question ?? card?.term ?? card?.title ?? ""
+      ).trim();
+      const back = String(
+        card?.back ?? card?.answer ?? card?.definition ?? card?.explanation ?? ""
+      ).trim();
+      return { front, back };
+    })
+    .filter((c) => c.front && c.back);
+
+  // If model returns quiz-only output, turn each quiz item into a card.
+  const cardsFromQuiz = quiz
+    .map((q) => {
+      const front = String(q?.question ?? "").trim();
+      const options = Array.isArray(q?.options) ? q.options.filter(Boolean).join(" | ") : "";
+      const answer = String(q?.correct_answer ?? "").trim();
+      const back = [
+        answer ? `Answer: ${answer}` : "",
+        options ? `Options: ${options}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return { front, back };
+    })
+    .filter((c) => c.front && c.back);
+
+  const merged = cardsFromFlashcards.length > 0 ? cardsFromFlashcards : cardsFromQuiz;
+
+  // Deduplicate repeated cards from model output.
+  const signatures = [];
+  return merged.filter((c) => {
+    const signature = buildCardSignature(c.front, c.back);
+    if (isLikelyDuplicateCard(signature, signatures)) {
+      return false;
+    }
+    signatures.push(signature);
+    return true;
+  });
+}
+
+function normalizeCardText(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const CARD_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "any",
+  "are",
+  "as",
+  "at",
+  "about",
+  "be",
+  "by",
+  "can",
+  "condition",
+  "define",
+  "does",
+  "equivalently",
+  "exist",
+  "exists",
+  "existence",
+  "for",
+  "from",
+  "given",
+  "guarantee",
+  "guarantees",
+  "has",
+  "have",
+  "how",
+  "if",
+  "imply",
+  "in",
+  "is",
+  "it",
+  "its",
+  "mean",
+  "means",
+  "of",
+  "on",
+  "or",
+  "over",
+  "state",
+  "such",
+  "that",
+  "the",
+  "theorem",
+  "then",
+  "this",
+  "to",
+  "what",
+  "when",
+  "where",
+  "which",
+  "why",
+  "with",
+]);
+
+// Similarity thresholds tuned to reduce duplicate paraphrases while avoiding aggressive merges.
+const DEDUPE_THRESHOLDS = Object.freeze({
+  highFrontJaccard: 0.7,
+  highFrontOverlap: 0.9,
+  minOverlapTokens: 3,
+  mediumFrontOverlap: 0.62,
+  lowBackJaccard: 0.18,
+  lowBackOverlap: 0.25,
+  lowCombinedJaccard: 0.42,
+  mediumFrontJaccard: 0.58,
+  mediumBackJaccard: 0.4,
+  mediumCombinedJaccard: 0.56,
+});
+
+function stemToken(token) {
+  if (token.length > 5 && token.endsWith("ing")) return token.slice(0, -3);
+  if (token.length > 4 && token.endsWith("ed")) return token.slice(0, -2);
+  if (token.length > 4 && token.endsWith("es")) return token.slice(0, -2);
+  if (token.length > 3 && token.endsWith("s")) return token.slice(0, -1);
+  return token;
+}
+
+function canonicalizeToken(token) {
+  const aliases = {
+    identical: "identity",
+    nontrivial: "non",
+    theorem: "result",
+  };
+  return aliases[token] || token;
+}
+
+function toTokenSet(value, options = {}) {
+  const normalized = options.isNormalized ? String(value ?? "") : normalizeCardText(value);
+  if (!normalized) return new Set();
+
+  const tokens = normalized
+    .split(" ")
+    .map(stemToken)
+    .map(canonicalizeToken)
+    .filter((token) => (token.length > 1 || /^\d+$/.test(token)) && !CARD_STOP_WORDS.has(token));
+
+  return new Set(tokens);
+}
+
+function tokenOverlapCount(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+
+  let overlap = 0;
+  for (const token of setA) {
+    if (setB.has(token)) overlap += 1;
+  }
+  return overlap;
+}
+
+function jaccardSimilarity(setA, setB) {
+  if (!setA.size && !setB.size) return 1;
+  if (!setA.size || !setB.size) return 0;
+
+  const overlap = tokenOverlapCount(setA, setB);
+
+  const unionSize = setA.size + setB.size - overlap;
+  return unionSize === 0 ? 0 : overlap / unionSize;
+}
+
+function overlapCoefficient(setA, setB) {
+  if (!setA.size || !setB.size) return 0;
+  const overlap = tokenOverlapCount(setA, setB);
+  return overlap / Math.min(setA.size, setB.size);
+}
+
+function hasLargeContainment(left, right) {
+  if (!left || !right) return false;
+  const minLen = Math.min(left.length, right.length);
+  if (minLen < 28) return false;
+  return left.includes(right) || right.includes(left);
+}
+
+function buildCardSignature(front, back) {
+  const frontNorm = normalizeCardText(front);
+  const backNorm = normalizeCardText(back);
+  const frontTokens = toTokenSet(frontNorm, { isNormalized: true });
+  const backTokens = toTokenSet(backNorm, { isNormalized: true });
+
+  return {
+    exactKey: `${frontNorm}__${backNorm}`,
+    frontNorm,
+    backNorm,
+    frontTokens,
+    backTokens,
+    combinedTokens: new Set([...frontTokens, ...backTokens]),
+  };
+}
+
+function isLikelyDuplicateCard(candidate, existingSignatures) {
+  for (const existing of existingSignatures) {
+    if (existing.exactKey === candidate.exactKey) {
+      return true;
+    }
+
+    if (existing.frontNorm === candidate.frontNorm && existing.frontNorm.length > 0) {
+      return true;
+    }
+
+    if (hasLargeContainment(existing.frontNorm, candidate.frontNorm)) {
+      return true;
+    }
+
+    const frontSimilarity = jaccardSimilarity(existing.frontTokens, candidate.frontTokens);
+    const backSimilarity = jaccardSimilarity(existing.backTokens, candidate.backTokens);
+    const combinedSimilarity = jaccardSimilarity(
+      existing.combinedTokens,
+      candidate.combinedTokens
+    );
+    const frontOverlapCount = tokenOverlapCount(existing.frontTokens, candidate.frontTokens);
+    const frontOverlap = overlapCoefficient(existing.frontTokens, candidate.frontTokens);
+    const backOverlap = overlapCoefficient(existing.backTokens, candidate.backTokens);
+
+    if (frontSimilarity >= DEDUPE_THRESHOLDS.highFrontJaccard) {
+      return true;
+    }
+
+    if (
+      frontOverlap >= DEDUPE_THRESHOLDS.highFrontOverlap
+      && frontOverlapCount >= DEDUPE_THRESHOLDS.minOverlapTokens
+    ) {
+      return true;
+    }
+
+    if (
+      frontOverlap >= DEDUPE_THRESHOLDS.mediumFrontOverlap
+      && (
+        backSimilarity >= DEDUPE_THRESHOLDS.lowBackJaccard
+        || backOverlap >= DEDUPE_THRESHOLDS.lowBackOverlap
+        || combinedSimilarity >= DEDUPE_THRESHOLDS.lowCombinedJaccard
+      )
+    ) {
+      return true;
+    }
+
+    if (
+      frontSimilarity >= DEDUPE_THRESHOLDS.mediumFrontJaccard
+      && (
+        backSimilarity >= DEDUPE_THRESHOLDS.mediumBackJaccard
+        || combinedSimilarity >= DEDUPE_THRESHOLDS.mediumCombinedJaccard
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 const uploadDir = path.join(__dirname, "..", "uploads");
 const storage = multer.diskStorage({
