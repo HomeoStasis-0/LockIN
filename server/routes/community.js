@@ -1,5 +1,4 @@
 const express = require("express");
-const { router } = require("../server");
 
 module.exports = function createCommunityRouter(pool, authenticate) {
   const router = express.Router();
