@@ -2,11 +2,13 @@ BEGIN;
 
 -- ---------- Users ----------
 CREATE TABLE users (
-  user_id        BIGSERIAL PRIMARY KEY,
-  username       TEXT NOT NULL UNIQUE,
-  email          TEXT NOT NULL UNIQUE,
-  password_hash  TEXT NOT NULL,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+  user_id            BIGSERIAL PRIMARY KEY,
+  username           TEXT NOT NULL UNIQUE,
+  email              TEXT NOT NULL UNIQUE,
+  password_hash      TEXT NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+  reset_code         TEXT,
+  reset_code_expires TIMESTAMPTZ
 );
 
 -- ---------- Deck ----------
