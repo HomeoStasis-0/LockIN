@@ -65,7 +65,7 @@ async function generateFromFile(filePath) {
       if (code !== 0) {
         const details = String(stderr || '').trim();
         if (details.includes('NO_EXTRACTABLE_TEXT')) {
-          reject(new Error('NO_EXTRACTABLE_TEXT: Uploaded file has no extractable text (likely scanned/image-only).'));
+          reject(new Error(`NO_EXTRACTABLE_TEXT: ${details}`));
           return;
         }
         reject(new Error(`file_processor.py exited ${code}: ${details || 'Unknown error'}`));
