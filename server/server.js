@@ -378,6 +378,194 @@ const generateToken = (user) => {
   );
 };
 
+const googleCookieOptions = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  maxAge: 10 * 60 * 1000,
+};
+
+function getGoogleRedirectUri(req) {
+  if (process.env.GOOGLE_REDIRECT_URI) {
+    return process.env.GOOGLE_REDIRECT_URI;
+  }
+
+  return `${req.protocol}://${req.get("host")}/auth/google/callback`;
+}
+
+function getFrontendPath(req, pathName) {
+  const normalizedPath = pathName.startsWith("/") ? pathName : `/${pathName}`;
+
+  if (process.env.CLIENT_ORIGIN) {
+    return `${process.env.CLIENT_ORIGIN}${normalizedPath}`;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return normalizedPath;
+  }
+
+  return `http://localhost:5173${normalizedPath}`;
+}
+
+function toUsernameBase(profile) {
+  const source = profile?.preferred_username || profile?.name || profile?.email || "user";
+  const cleaned = String(source)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 24);
+
+  return cleaned || "user";
+}
+
+async function findOrCreateGoogleUser(profile) {
+  const email = String(profile?.email || "").toLowerCase().trim();
+  if (!email) {
+    throw new Error("Google account does not include an email address");
+  }
+
+  const existing = await pool.query(
+    `SELECT user_id, username, email
+     FROM users
+     WHERE email=$1`,
+    [email]
+  );
+
+  if (existing.rowCount > 0) {
+    return existing.rows[0];
+  }
+
+  const base = toUsernameBase(profile);
+  const generatedSecret = crypto.randomBytes(32).toString("hex");
+  const passwordHash = await bcrypt.hash(generatedSecret, 10);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const suffix = attempt === 0 ? "" : `_${crypto.randomBytes(2).toString("hex")}`;
+    const username = `${base}${suffix}`.slice(0, 30);
+
+    try {
+      const inserted = await pool.query(
+        `INSERT INTO users (username, email, password_hash)
+         VALUES ($1, $2, $3)
+         RETURNING user_id, username, email`,
+        [username, email, passwordHash]
+      );
+      return inserted.rows[0];
+    } catch (err) {
+      if (err?.code === "23505") {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error("Failed to create user from Google profile");
+}
+
+app.get("/auth/google", (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return res.status(500).json({ error: "Google OAuth is not configured" });
+  }
+
+  const state = crypto.randomBytes(24).toString("hex");
+  res.cookie("google_oauth_state", state, googleCookieOptions);
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: getGoogleRedirectUri(req),
+    response_type: "code",
+    scope: "openid email profile",
+    state,
+    prompt: "select_account",
+  });
+
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get("/auth/google/callback", async (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return res.redirect(getFrontendPath(req, "/login?oauth=not_configured"));
+  }
+
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.redirect(getFrontendPath(req, "/login?oauth=denied"));
+  }
+
+  if (!code || !state || state !== req.cookies.google_oauth_state) {
+    return res.redirect(getFrontendPath(req, "/login?oauth=state_mismatch"));
+  }
+
+  res.clearCookie("google_oauth_state", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+
+  try {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: getGoogleRedirectUri(req),
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      const details = await tokenResponse.text();
+      console.error("Google token exchange failed", details);
+      return res.redirect(getFrontendPath(req, "/login?oauth=token_failed"));
+    }
+
+    const tokenPayload = await tokenResponse.json();
+    const accessToken = tokenPayload.access_token;
+
+    if (!accessToken) {
+      return res.redirect(getFrontendPath(req, "/login?oauth=token_missing"));
+    }
+
+    const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!profileResponse.ok) {
+      const details = await profileResponse.text();
+      console.error("Google userinfo failed", details);
+      return res.redirect(getFrontendPath(req, "/login?oauth=profile_failed"));
+    }
+
+    const profile = await profileResponse.json();
+    if (!profile.email || profile.email_verified === false) {
+      return res.redirect(getFrontendPath(req, "/login?oauth=email_unverified"));
+    }
+
+    const user = await findOrCreateGoogleUser(profile);
+    const token = generateToken(user);
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+    });
+
+    return res.redirect(getFrontendPath(req, "/dashboard"));
+  } catch (err) {
+    console.error("Google OAuth callback error", err);
+    return res.redirect(getFrontendPath(req, "/login?oauth=failed"));
+  }
+});
+
 // Registration
 app.post("/auth/register", async (req, res) => {
   const { username, email, password } = req.body;
