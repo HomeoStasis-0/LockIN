@@ -743,6 +743,14 @@ async function processMultipleFiles(filePaths) {
   };
 }
 
+function hasOcrRuntimeIssue(errors = []) {
+  return Array.isArray(errors)
+    && errors.some((m) => {
+      const msg = String(m || "");
+      return msg.includes("OCR_UNAVAILABLE") || msg.includes("tesseract binary not found");
+    });
+}
+
 app.use("/api/community", createCommunityRouter(pool, authenticate));
 
 
@@ -874,11 +882,14 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), as
     if (flashcards.length === 0) {
       const noTextError = Array.isArray(studySet?.errors)
         && studySet.errors.some((m) => String(m).includes("NO_EXTRACTABLE_TEXT"));
+      const ocrRuntimeIssue = hasOcrRuntimeIssue(studySet?.errors);
 
       if (noTextError) {
         return res.status(422).json({
           error: "No extractable text found in uploaded file",
-          message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+          message: ocrRuntimeIssue
+            ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
+            : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
           processingErrors: studySet.errors,
           quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
         });
@@ -948,9 +959,12 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), as
     console.error(err);
     const errMsg = err instanceof Error ? err.message : "Unknown error";
     if (errMsg.includes("NO_EXTRACTABLE_TEXT")) {
+      const ocrRuntimeIssue = errMsg.includes("OCR_UNAVAILABLE") || errMsg.includes("tesseract binary not found");
       return res.status(422).json({
         error: "No extractable text found in uploaded file",
-        message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+        message: ocrRuntimeIssue
+          ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
+          : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
       });
     }
 

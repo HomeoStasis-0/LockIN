@@ -4,6 +4,7 @@ alembic
 python-dotenv
 passlib[bcrypt]
 pdfplumber
+pypdfium2
 groq
 python-pptx
 python-docx
