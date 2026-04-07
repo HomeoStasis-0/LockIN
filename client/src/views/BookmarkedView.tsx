@@ -1,10 +1,16 @@
 import AppShell from "../components/AppShell"
+<<<<<<< HEAD
 import DeckUI2 from "../components/DeckUI2"
 import { useNavigate, useParams } from "react-router-dom"
 
 export default function BookmarkedView() {
     const id = useParams();
     const deckId = Number(id);
+=======
+import { useNavigate } from "react-router-dom"
+
+export default function BookmarkedView() {
+>>>>>>> main
     const navigate = useNavigate();
 
     return (

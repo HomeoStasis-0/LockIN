@@ -12,12 +12,21 @@ const extractZip = require("extract-zip");
 const { updateCardDb } = require("./utils/spaced_repetition");
 const { generateStudyMaterials, generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
-
+const nodemailer = require("nodemailer");
+const crypto = require('crypto');
 
 const app = express();
 
 const uploadDir = path.join(__dirname, "..", "uploads");
 const extractDir = path.join(__dirname, "..", "uploads", "extracted");
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
+});
 
 // Supported file extensions
 const SUPPORTED_EXTENSIONS = [".pdf", ".pptx", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".rtf", ".zip"];
@@ -1173,5 +1182,123 @@ app.delete("/api/saved/:id", authenticate, async (req, res) => {
     client.release();
   }
 });
+
+// ######### FORGOT PASSWORD ENDPOINTS #########
+// #############################################
+app.post("/auth/forgot-password", async (req, res) => {
+  const { login } = req.body ?? {};
+  if (!login) return res.status(400).json({ error: "login required" });
+ 
+  try {
+    const result = await pool.query(
+      `SELECT user_id, email FROM users WHERE username = $1 OR email = $1`,
+      [login]
+    );
+ 
+    // Always return 200 — never reveal whether the account exists
+    if (!result.rows.length) {
+      return res.json({ ok: true });
+    }
+ 
+    const user = result.rows[0];
+ 
+    // 6-digit code
+    const code = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+ 
+    // Store hashed so plain text isn't sitting in the DB
+    const hashedCode = await bcrypt.hash(code, 8);
+ 
+    await pool.query(
+      `UPDATE users
+       SET reset_code = $1, reset_code_expires = $2
+       WHERE user_id = $3`,
+      [hashedCode, expiresAt, user.user_id]
+    );
+ 
+    await transporter.sendMail({
+      from: `"LockIN" <${process.env.GMAIL_USER}>`,
+      to: user.email,
+      subject: "Your password reset code",
+      html: `
+        <div style="font-family: sans-serif; max-width: 420px; margin: auto; padding: 2rem;">
+          <h2 style="color: #4f46e5; margin-bottom: 0.5rem;">Password Reset</h2>
+          <p style="color: #374151;">
+            Use the code below to reset your password.
+            It expires in <strong>15 minutes</strong>.
+          </p>
+          <div style="
+            font-size: 2.5rem;
+            font-weight: bold;
+            letter-spacing: 0.4em;
+            text-align: center;
+            background: #eef2ff;
+            color: #4338ca;
+            padding: 1.25rem;
+            border-radius: 12px;
+            margin: 1.5rem 0;
+          ">
+            ${code}
+          </div>
+          <p style="color: #6b7280; font-size: 0.875rem;">
+            If you didn't request this, you can safely ignore this email.
+          </p>
+        </div>
+      `,
+    });
+ 
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("forgot-password error:", err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+ 
+app.post("/auth/reset-password", async (req, res) => {
+  const { login, code, newPassword } = req.body ?? {};
+ 
+  if (!login || !code || !newPassword) {
+    return res.status(400).json({ error: "login, code, and newPassword are required" });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters" });
+  }
+ 
+  try {
+    const result = await pool.query(
+      `SELECT user_id, reset_code, reset_code_expires
+       FROM users
+       WHERE username = $1 OR email = $1`,
+      [login]
+    );
+ 
+    const user = result.rows[0];
+    const invalid = () => res.status(400).json({ error: "Invalid or expired code." });
+ 
+    if (!user || !user.reset_code || !user.reset_code_expires) return invalid();
+    if (new Date() > new Date(user.reset_code_expires)) return invalid();
+ 
+    const codeMatches = await bcrypt.compare(code, user.reset_code);
+    if (!codeMatches) return invalid();
+ 
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+ 
+    await pool.query(
+      `UPDATE users
+       SET password_hash = $1,
+           reset_code = NULL,
+           reset_code_expires = NULL
+       WHERE user_id = $2`,
+      [hashedPassword, user.user_id]
+    );
+ 
+    res.json({ ok: true, message: "Password updated successfully" });
+  } catch (err) {
+    console.error("reset-password error:", err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+// #############################################
+// #############################################
 
 module.exports = app;
