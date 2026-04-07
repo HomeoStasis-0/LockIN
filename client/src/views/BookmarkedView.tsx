@@ -1,8 +1,10 @@
 import AppShell from "../components/AppShell"
+import DeckUI2 from "../components/DeckUI2"
 import { useNavigate, useParams } from "react-router-dom"
 
 export default function BookmarkedView() {
-    const deckId = useParams();
+    const id = useParams();
+    const deckId = Number(id);
     const navigate = useNavigate();
 
     return (
@@ -15,6 +17,11 @@ export default function BookmarkedView() {
             ← Back to Dashboard
             </button>
         </div>
+        {!Number.isFinite(deckId) ? (
+            <div style={{ color: "crimson" }}>Invalid course/deck id in URL.</div>
+        ) : (
+            <DeckUI2 deckId={deckId} />
+        )}
         </AppShell>
     );
 }

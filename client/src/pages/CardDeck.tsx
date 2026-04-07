@@ -170,7 +170,7 @@ export default function DeckUI({ deckId }: { deckId: number }) {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+export function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div style={styles.stat}>
       <div style={styles.statValue}>{value}</div>
