@@ -44,8 +44,13 @@ MAX_CHUNKS = 4
 def extract_text_from_pdf_ocr(pdf_path):
     """OCR fallback for scanned/image-only PDFs."""
     if pdfium is None or pytesseract is None:
+        missing = []
+        if pdfium is None:
+            missing.append("pypdfium2")
+        if pytesseract is None:
+            missing.append("pytesseract")
         print(
-            "OCR unavailable: install pytesseract and ensure tesseract is installed.",
+            f"OCR_UNAVAILABLE: Missing Python OCR dependencies: {', '.join(missing)}.",
             file=sys.stderr,
         )
         return ""
@@ -55,7 +60,7 @@ def extract_text_from_pdf_ocr(pdf_path):
         _ = pytesseract.get_tesseract_version()
     except Exception:
         print(
-            "OCR unavailable: tesseract binary not found. Install with `brew install tesseract`.",
+            "OCR_UNAVAILABLE: tesseract binary not found. Install tesseract on the server runtime.",
             file=sys.stderr,
         )
         return ""
