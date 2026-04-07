@@ -1,0 +1,13 @@
+{
+  "name": "LockIN",
+  "description": "LockIN study tool with OCR-backed document import",
+  "keywords": ["node", "express", "react", "ocr", "heroku"],
+  "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-apt"
+    },
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-nodejs"
+    }
+  ]
+}
