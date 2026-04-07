@@ -1,3 +1,4 @@
+import type { PublicDeckRow } from "../types/CommunityTypes";
 import type { CardRow, DeckRow, DeckWithCards } from "../types/DeckTypes";
 
 function normalizeCard(c: any) {
@@ -129,6 +130,7 @@ export async function importPdfToDeck(deckId: number, file: File): Promise<Impor
     insertedCards: (json.insertedCards ?? []).map(normalizeCard),
   };
 }
-  export async function getSavedPublicDecks(): Promise<PublicDeckRow[]> {
-    return api<PublicDeckRow[]>("/api/community/saved");
-  }
+
+export async function getSavedPublicDecks(): Promise<PublicDeckRow[]> {
+  return api<PublicDeckRow[]>("/api/community/saved");
+}
