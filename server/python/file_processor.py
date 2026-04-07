@@ -4,6 +4,7 @@ import json
 import sys
 import mimetypes
 import re
+import shutil
 from groq import Groq
 from dotenv import load_dotenv
 
@@ -39,6 +40,28 @@ client = Groq(
 MAX_CHARS_PER_CHUNK = 8000
 MAX_CHUNKS = 4
 
+
+def resolve_tesseract_cmd():
+    """Find the tesseract binary in common local, virtualenv, and Heroku apt locations."""
+    if pytesseract is None:
+        return None
+
+    candidates = [
+        os.environ.get("TESSERACT_CMD"),
+        os.environ.get("TESSERACT_PATH"),
+        shutil.which("tesseract"),
+        "/app/.apt/usr/bin/tesseract",
+        "/usr/bin/tesseract",
+        "/usr/local/bin/tesseract",
+    ]
+
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            return candidate
+
+    return None
+
 # ==================== FILE EXTRACTION FUNCTIONS ====================
 
 def extract_text_from_pdf_ocr(pdf_path):
@@ -56,11 +79,19 @@ def extract_text_from_pdf_ocr(pdf_path):
         return ""
 
     try:
+        tesseract_cmd = resolve_tesseract_cmd()
+        if not tesseract_cmd:
+            print(
+                "OCR_UNAVAILABLE: tesseract binary not found. Install tesseract on the server runtime or set TESSERACT_CMD.",
+                file=sys.stderr,
+            )
+            return ""
+
         # Verify tesseract binary is accessible.
         _ = pytesseract.get_tesseract_version()
     except Exception:
         print(
-            "OCR_UNAVAILABLE: tesseract binary not found. Install tesseract on the server runtime.",
+            "OCR_UNAVAILABLE: tesseract binary not found. Install tesseract on the server runtime or set TESSERACT_CMD.",
             file=sys.stderr,
         )
         return ""
