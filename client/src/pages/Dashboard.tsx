@@ -82,14 +82,11 @@ export default function Dashboard() {
   const[bkdecks, setbkDecks] = useState<PublicDeckRow[]>([]);
   const [bkdecksLoading, setbkDecksLoading] = useState(false);
   const [bkdecksError, setbkDecksError] = useState<string | null>(null);
-  const [unsaveDeckId, setunsaveDeckId] = useState<number | null>(null);
 
 
   // load decks once user is known
   useEffect(() => {
     if (!user) return;
-
-    let cancelled = false;
 
     async function loadDecks() {
       try {
@@ -128,9 +125,6 @@ export default function Dashboard() {
 
     loadDecks();
     loadbkDecks();
-    return () => {
-      cancelled = true;
-    };
   }, [user]);
 
   const canCreate = useMemo(() => newId.trim() && newTitle.trim(), [newId, newTitle]);
@@ -217,8 +211,6 @@ export default function Dashboard() {
 
   async function unsaveCourse(publicDeckId: number) {
     try {
-      setunsaveDeckId(publicDeckId);
-
       await api<{ saved: boolean; removed_cards: number }>(`/api/saved/${publicDeckId}`, {
         method: "DELETE",
       });
@@ -230,8 +222,6 @@ export default function Dashboard() {
       alert("Bookmark removed");
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to remove bookmark");
-    } finally {
-      setunsaveDeckId(null);
     }
   }
 
