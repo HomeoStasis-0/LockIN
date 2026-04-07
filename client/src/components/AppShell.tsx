@@ -14,10 +14,10 @@ export default function AppShell({
 }: AppShellProps) {
   return (
     <div className="min-h-screen bg-slate-100">
-      <div className="flex">
+      <div className="flex min-h-screen">
         <SideBar />
 
-        <main className="flex-1 p-6">
+        <main className="flex flex-1 flex-col p-6">
           <header className="mb-6 flex items-center justify-between rounded-3xl bg-white px-6 py-5 shadow-sm">
             <h1 className="text-3xl font-semibold text-slate-800">
               {pageTitle}
@@ -26,7 +26,7 @@ export default function AppShell({
             {headerRight ? <div>{headerRight}</div> : null}
           </header>
 
-          <section className="rounded-3xl bg-white p-6 shadow-sm min-h-[75vh]">
+          <section className="flex-1 rounded-3xl bg-white p-6 shadow-sm">
             {children}
           </section>
         </main>

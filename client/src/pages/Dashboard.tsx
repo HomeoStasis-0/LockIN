@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import type { DeckRow } from "../types/DeckTypes"; 
 import type { PublicDeckRow } from "../types/CommunityTypes"
 import { publishDeck, unpublishDeck } from "../API/CommunityAPI";
+import AppShell from "../components/AppShell";
 
 
 type CreateDeckBody = {
@@ -228,46 +229,46 @@ export default function Dashboard() {
   if (!user) return null;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", padding: 24 }}>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          maxWidth: 960,
-          margin: "0 auto",
-        }}
-      >
-        <div>
-          <button
-            onClick={async () => {
-              try {
-                await logout();
-              } finally {
-                navigate("/");
-              }
-            }}
-            className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
-          >
-            Logout
-          </button>
+    <AppShell pageTitle="Dashboard">
+      <div style={{ maxWidth: 960, margin: "0 auto" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 20,
+          }}
+        >
+          <div>
+            <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800 }}>
+              Welcome, {user.username}!
+            </h1>
+            <div style={{ color: "#6b7280" }}>{user.email}</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => setAdding((a) => !a)}
+              className="px-4 py-2 bg-white border rounded"
+            >
+              {adding ? "Cancel" : "Add Course"}
+            </button>
+
+            <button
+              onClick={async () => {
+                try {
+                  await logout();
+                } finally {
+                  navigate("/");
+                }
+              }}
+              className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
-        <div style={{ textAlign: "center" }}>
-          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800 }}>
-            Welcome, {user.username}!
-          </h1>
-          <div style={{ color: "#6b7280" }}>{user.email}</div>
-        </div>
-
-        <div style={{ width: 120, textAlign: "right" }}>
-          <button onClick={() => setAdding((a) => !a)} className="px-4 py-2 bg-white border rounded">
-            {adding ? "Cancel" : "Add Course"}
-          </button>
-        </div>
-      </header>
-
-      <main style={{ maxWidth: 960, margin: "20px auto 60px", background: "transparent" }}>
         {adding ? (
           <div style={{ marginBottom: 12, padding: 12, background: "white", borderRadius: 8 }}>
             <div style={{ marginBottom: 8 }}>
@@ -298,7 +299,7 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        <section>
+        <section style={{ marginBottom: 32 }}>
           <h2 style={{ fontSize: 20, marginBottom: 12, fontWeight: 800 }}>Your Courses</h2>
 
           {decksLoading ? <div>Loading decks…</div> : null}
@@ -321,7 +322,7 @@ export default function Dashboard() {
                   {d.course_number != null ? ` · ${d.course_number}` : ""}
                 </div>
 
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Link
                     to={`/courses/${d.id}`}
                     className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
@@ -359,6 +360,7 @@ export default function Dashboard() {
             ))}
           </div>
         </section>
+
         <section>
           <h2 style={{ fontSize: 20, marginBottom: 12, fontWeight: 800 }}>
             Bookmarked Courses
@@ -370,7 +372,7 @@ export default function Dashboard() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
             {bkdecks.map((d) => (
               <div
-                key={d.deck_id}
+                key={d.public_deck_id}
                 style={{
                   padding: 16,
                   borderRadius: 12,
@@ -384,7 +386,7 @@ export default function Dashboard() {
                   {d.course_number != null ? ` · ${d.course_number}` : ""}
                 </div>
 
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Link
                     to={`/bookmarked/${d.public_deck_id}`}
                     className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
@@ -402,7 +404,7 @@ export default function Dashboard() {
             ))}
           </div>
         </section>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }
