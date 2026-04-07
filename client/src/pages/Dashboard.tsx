@@ -64,7 +64,7 @@ export default function Dashboard() {
 
   // redirect if not logged in
   useEffect(() => {
-    if (!loading && !user) navigate("/login");
+    if (!loading && !user) navigate("/");
   }, [user, loading, navigate]);
 
   const [decks, setDecks] = useState<DeckRow[]>([]);
@@ -244,7 +244,7 @@ export default function Dashboard() {
               try {
                 await logout();
               } finally {
-                navigate("/login");
+                navigate("/");
               }
             }}
             className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
