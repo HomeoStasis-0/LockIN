@@ -8,6 +8,8 @@ const PAGE_SIZE = 5;
 
 export default function PreviewDeckView(props: {
   cards: PublicDeckCardRow[];
+  onSave?: () => void;
+  onCopy?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -50,7 +52,18 @@ export default function PreviewDeckView(props: {
   if (props.cards.length === 0) {
     return (
       <section style={styles.section}>
-        <div style={styles.h2}>Deck Preview</div>
+        <div style={styles.sectionHeader}>
+          <div style={styles.h2}>Deck Preview</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={styles.btn} onClick={props.onSave} disabled={!props.onSave}>
+              Bookmark
+            </button>
+            <button style={styles.btn} onClick={props.onCopy} disabled={!props.onCopy}>
+              Copy
+            </button>
+          </div>
+        </div>
+
         <div style={styles.empty}>This deck has no cards yet.</div>
       </section>
     );
@@ -60,12 +73,21 @@ export default function PreviewDeckView(props: {
     <section style={styles.section}>
       <div style={styles.sectionHeader}>
         <div style={styles.h2}>Deck Preview</div>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search cards…"
-          style={styles.search}
-        />
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search cards…"
+            style={styles.search}
+          />
+          <button style={styles.btn} onClick={props.onSave} disabled={!props.onSave}>
+            Bookmark
+          </button>
+          <button style={styles.btn} onClick={props.onCopy} disabled={!props.onCopy}>
+            Copy
+          </button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (

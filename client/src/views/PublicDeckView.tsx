@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import type { PublicDeckWithCards } from "../types/CommunityTypes";
-import { getPublicDeckWithCards } from "../API/CommunityAPI";
+import {
+  getPublicDeckWithCards,
+  savePublicDeck,
+  copyPublicDeck,
+} from "../API/CommunityAPI";
 import PreviewDeckView from "./PreviewDeckView";
 
 export default function PublicDeckView({ deckId }: { deckId: number }) {
@@ -39,6 +43,24 @@ export default function PublicDeckView({ deckId }: { deckId: number }) {
     };
   }, [deckId]);
 
+  async function handleSave(publicDeckId: number) {
+    try {
+      await savePublicDeck(publicDeckId);
+      alert("Deck bookmarked");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to bookmark deck");
+    }
+  }
+
+  async function handleCopy(publicDeckId: number) {
+    try {
+      await copyPublicDeck(publicDeckId);
+      alert("Deck copied");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to copy deck");
+    }
+  }
+
   if (loading) {
     return <div>Loading deck...</div>;
   }
@@ -61,7 +83,11 @@ export default function PublicDeckView({ deckId }: { deckId: number }) {
         </div>
       </div>
 
-      <PreviewDeckView cards={deck.cards} />
+      <PreviewDeckView
+        cards={deck.cards}
+        onSave={() => handleSave(deck.public_deck_id)}
+        onCopy={() => handleCopy(deck.public_deck_id)}
+      />
     </div>
   );
 }

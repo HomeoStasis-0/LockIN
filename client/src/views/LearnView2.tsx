@@ -8,7 +8,7 @@ function isInReviewPile(card: PublicDeckCardRow) {
   return card.due_date !== null;
 }
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 3;
 
 export default function LearnView2(props: {
   cards: PublicDeckCardRow[];

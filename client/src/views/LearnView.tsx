@@ -4,7 +4,7 @@ import { styles } from "../styles/DeckStyles";
 import CardRowView from "../components/CardRow";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 3;
 
 export default function LearnView(props: {
   cards: CardRow[];
