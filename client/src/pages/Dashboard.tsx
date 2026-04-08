@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import type { DeckRow } from "../types/DeckTypes"; 
 import type { PublicDeckRow } from "../types/CommunityTypes"
 import { publishDeck, unpublishDeck } from "../API/CommunityAPI";
+import AppShell from "../components/AppShell";
 
 
 type CreateDeckBody = {
@@ -228,69 +229,61 @@ export default function Dashboard() {
   if (!user) return null;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f8fafc", padding: 24 }}>
-      <header
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          maxWidth: 960,
-          margin: "0 auto",
-        }}
-      >
-        <div>
-          <button
-            onClick={async () => {
-              try {
-                await logout();
-              } finally {
-                navigate("/");
-              }
-            }}
-            className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
-          >
-            Logout
-          </button>
+    <AppShell pageTitle="Dashboard">
+      <div className="mx-auto max-w-5xl space-y-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-800">
+              Welcome, {user.username}!
+            </h1>
+            <p className="mt-1 text-sm text-slate-500">{user.email}</p>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => setAdding((a) => !a)}
+              className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              {adding ? "Cancel" : "Add Course"}
+            </button>
+
+            <button
+              onClick={async () => {
+                try {
+                  await logout();
+                } finally {
+                  navigate("/");
+                }
+              }}
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
-        <div style={{ textAlign: "center" }}>
-          <h1 style={{ margin: 0, fontSize: 32, fontWeight: 800 }}>
-            Welcome, {user.username}!
-          </h1>
-          <div style={{ color: "#6b7280" }}>{user.email}</div>
-        </div>
-
-        <div style={{ width: 120, textAlign: "right" }}>
-          <button onClick={() => setAdding((a) => !a)} className="px-4 py-2 bg-white border rounded">
-            {adding ? "Cancel" : "Add Course"}
-          </button>
-        </div>
-      </header>
-
-      <main style={{ maxWidth: 960, margin: "20px auto 60px", background: "transparent" }}>
         {adding ? (
-          <div style={{ marginBottom: 12, padding: 12, background: "white", borderRadius: 8 }}>
-            <div style={{ marginBottom: 8 }}>
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+            <div className="grid gap-3 sm:grid-cols-2">
               <input
                 placeholder="Course ID (e.g. CSCE120)"
                 value={newId}
                 onChange={(e) => setNewId(e.target.value)}
-                style={{ padding: 8, width: "100%", boxSizing: "border-box" }}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-400"
               />
-            </div>
-            <div style={{ marginBottom: 8 }}>
               <input
                 placeholder="Course Title"
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
-                style={{ padding: 8, width: "100%", boxSizing: "border-box" }}
+                className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none transition focus:border-indigo-400"
               />
             </div>
-            <div>
+
+            <div className="mt-4">
               <button
                 onClick={addCourse}
                 disabled={!canCreate}
-                className="px-4 py-2 bg-indigo-600 text-white rounded disabled:opacity-50"
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-50"
               >
                 Create
               </button>
@@ -298,45 +291,45 @@ export default function Dashboard() {
           </div>
         ) : null}
 
-        <section>
-          <h2 style={{ fontSize: 20, marginBottom: 12, fontWeight: 800 }}>Your Courses</h2>
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-slate-800">Your Courses</h2>
+          </div>
 
-          {decksLoading ? <div>Loading decks…</div> : null}
-          {decksError ? <div style={{ color: "crimson" }}>{decksError}</div> : null}
+          {decksLoading ? <div className="text-sm text-slate-500">Loading decks…</div> : null}
+          {decksError ? <div className="text-sm text-red-600">{decksError}</div> : null}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {decks.map((d) => (
               <div
                 key={d.id}
-                style={{
-                  padding: 16,
-                  borderRadius: 12,
-                  background: "white",
-                  boxShadow: "0 0 0 1px #e5e7eb inset",
-                }}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm transition hover:shadow-md"
               >
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>{d.deck_name}</div>
-                <div style={{ color: "#6b7280", marginBottom: 10 }}>
-                  {d.subject ?? "—"}
-                  {d.course_number != null ? ` · ${d.course_number}` : ""}
+                <div className="mb-3">
+                  <h3 className="text-lg font-semibold text-slate-800">{d.deck_name}</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {d.subject ?? "—"}
+                    {d.course_number != null ? ` · ${d.course_number}` : ""}
+                  </p>
                 </div>
 
-                <div style={{ display: "flex", gap: 8 }}>
+                <div className="flex flex-wrap gap-2">
                   <Link
                     to={`/courses/${d.id}`}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
                   >
                     Open
                   </Link>
+
                   <button
                     onClick={() =>
                       publishedDeckIds[d.id] ? unpublishCourse(d.id) : publishCourse(d.id)
                     }
                     disabled={publishingDeckId === d.id}
-                    className={`px-4 py-2 bg-white border rounded transition disabled:opacity-60 ${
+                    className={`rounded-xl border px-4 py-2 text-sm font-medium transition disabled:opacity-60 ${
                       publishedDeckIds[d.id]
-                        ? "text-orange-600 border-orange-300 hover:bg-orange-50"
-                        : "text-blue-600 border-blue-300 hover:bg-blue-50"
+                        ? "border-orange-300 bg-white text-orange-600 hover:bg-orange-50"
+                        : "border-blue-300 bg-white text-blue-600 hover:bg-blue-50"
                     }`}
                   >
                     {publishingDeckId === d.id
@@ -347,10 +340,11 @@ export default function Dashboard() {
                       ? "Unpublish"
                       : "Publish"}
                   </button>
+
                   <button
                     onClick={() => deleteCourse(d.id, d.deck_name)}
                     disabled={deletingDeckId === d.id}
-                    className="px-4 py-2 bg-white border rounded text-red-600 border-red-300 hover:bg-red-50 transition disabled:opacity-60"
+                    className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
                   >
                     {deletingDeckId === d.id ? "Deleting..." : "Delete"}
                   </button>
@@ -359,50 +353,49 @@ export default function Dashboard() {
             ))}
           </div>
         </section>
-        <section>
-          <h2 style={{ fontSize: 20, marginBottom: 12, fontWeight: 800 }}>
-            Bookmarked Courses
-          </h2>
 
-          {bkdecksLoading ? <div>Loading bookmarked decks…</div> : null}
-          {bkdecksError ? <div style={{ color: "crimson" }}>{bkdecksError}</div> : null}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-slate-800">Bookmarked Courses</h2>
+          </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 12 }}>
+          {bkdecksLoading ? <div className="text-sm text-slate-500">Loading bookmarked decks…</div> : null}
+          {bkdecksError ? <div className="text-sm text-red-600">{bkdecksError}</div> : null}
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {bkdecks.map((d) => (
               <div
-                key={d.deck_id}
-                style={{
-                  padding: 16,
-                  borderRadius: 12,
-                  background: "white",
-                  boxShadow: "0 0 0 1px #e5e7eb inset",
-                }}
+                key={d.public_deck_id}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm transition hover:shadow-md"
               >
-                <div style={{ fontWeight: 800, marginBottom: 6 }}>{d.deck_name}</div>
-                <div style={{ color: "#6b7280", marginBottom: 10 }}>
-                  {d.subject ?? "—"}
-                  {d.course_number != null ? ` · ${d.course_number}` : ""}
+                <div className="mb-3">
+                  <h3 className="text-lg font-semibold text-slate-800">{d.deck_name}</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {d.subject ?? "—"}
+                    {d.course_number != null ? ` · ${d.course_number}` : ""}
+                  </p>
                 </div>
 
-                <div style={{ display: "flex", gap: 8 }}>
+                <div className="flex flex-wrap gap-2">
                   <Link
                     to={`/bookmarked/${d.public_deck_id}`}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition"
+                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
                   >
                     Open
                   </Link>
+
                   <button
                     onClick={() => unsaveCourse(d.public_deck_id)}
-                    className="px-4 py-2 bg-white border rounded text-red-600 border-red-300 hover:bg-red-50 transition"
+                    className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
                   >
-                    Remove Bookmark
+                    Remove
                   </button>
                 </div>
               </div>
             ))}
           </div>
         </section>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   );
 }

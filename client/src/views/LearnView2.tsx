@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CardRow } from "../types/DeckTypes";
+import type { PublicDeckCardRow } from "../types/CommunityTypes";
 import { styles } from "../styles/DeckStyles";
-import CardRowView from "../components/CardRow";
+import RichCardText from "../components/RichCardText";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+
+function isInReviewPile(card: PublicDeckCardRow) {
+  return card.due_date !== null;
+}
 
 const PAGE_SIZE = 3;
 
-export default function LearnView(props: {
-  cards: CardRow[];
-  onEdit: (c: CardRow) => void;
-  onRemove: (id: number) => void;
+export default function LearnView2(props: {
+  cards: PublicDeckCardRow[];
   onToggleReviewPile: (id: number) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -50,10 +52,19 @@ export default function LearnView(props: {
     setPage((prev) => Math.min(totalPages, prev + 1));
   }
 
+  if (props.cards.length === 0) {
+    return (
+      <section style={styles.section}>
+        <div style={styles.h2}>Learn</div>
+        <div style={styles.empty}>This deck has no cards yet.</div>
+      </section>
+    );
+  }
+
   return (
     <section style={styles.section}>
       <div style={styles.sectionHeader}>
-        <div style={styles.h2}>Cards (show all)</div>
+        <div style={styles.h2}>Cards</div>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -73,14 +84,31 @@ export default function LearnView(props: {
 
           <div style={styles.cardGrid}>
             {paginatedCards.map((c) => (
-              <CardRowView
-                key={c.id}
-                card={c}
-                onEdit={props.onEdit}
-                onRemove={props.onRemove}
-                onToggleReviewPile={props.onToggleReviewPile}
-                mode="learn"
-              />
+              <div key={c.id} style={styles.cardRow}>
+                <div style={styles.cardFront}>
+                  <RichCardText text={c.card_front} style={styles.richText} />
+                </div>
+
+                <div style={{ height: 10 }} />
+
+                <div style={styles.cardBack}>
+                  <RichCardText text={c.card_back} style={styles.richText} />
+                </div>
+
+                <div style={{ marginTop: 10, ...styles.muted }}>
+                  Interval: {c.interval_days} day(s) · EF: {c.ease_factor.toFixed(2)} · Reps:{" "}
+                  {c.repetitions}
+                </div>
+
+                <div style={{ marginTop: 10 }}>
+                  <button
+                    style={styles.btn}
+                    onClick={() => props.onToggleReviewPile(c.id)}
+                  >
+                    {isInReviewPile(c) ? "Remove from review" : "Add to review"}
+                  </button>
+                </div>
+              </div>
             ))}
           </div>
 
@@ -109,7 +137,8 @@ export default function LearnView(props: {
       )}
 
       <div style={styles.tip}>
-        Review pile is currently derived from whether <code>due_date</code> is null or not.
+        Bookmarked decks are read-only here. You can study and review them without editing the
+        original author’s cards.
       </div>
     </section>
   );

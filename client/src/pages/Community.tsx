@@ -6,7 +6,7 @@ import Pagination from "../components/Pagination";
 import { getPublicDecks, savePublicDeck, copyPublicDeck } from "../API/CommunityAPI";
 import type { PublicDeckRow } from "../types/CommunityTypes";
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 12;
 
 export default function Community() {
   const [search, setSearch] = useState("");
