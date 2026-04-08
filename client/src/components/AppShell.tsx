@@ -26,9 +26,9 @@ export default function AppShell({
             {headerRight ? <div>{headerRight}</div> : null}
           </header>
 
-          <section className="flex-1 rounded-3xl bg-white p-6 shadow-sm">
-            {children}
-          </section>
+        <section className="flex-1 rounded-3xl bg-slate-50 p-6 shadow-sm">
+          {children}
+        </section>
         </main>
       </div>
     </div>

@@ -9,7 +9,7 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const multer = require("multer");
 const extractZip = require("extract-zip");
-const { updateCardDb } = require("./utils/spaced_repetition");
+const { sm2Update, updateCardDb } = require("./utils/spaced_repetition");
 const { generateStudyMaterials, generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
 const nodemailer = require("nodemailer");
@@ -1026,6 +1026,7 @@ app.post("/api/cards/:id/rate", async (req, res) => {
   }
 });
 
+
 app.patch("/api/cards/:id", async (req, res) => {
   const id = Number(req.params.id);
   const c = req.body ?? {};
@@ -1500,6 +1501,232 @@ app.post("/auth/reset-password", async (req, res) => {
     res.status(500).json({ error: "Something went wrong" });
   }
 });
+
+app.post("/api/public-cards/:id/rate", authenticate, async (req, res) => {
+  const id = Number(req.params.id);
+  const rating = req.body?.rating;
+
+  const quality = ratingToQuality(rating);
+  if (!Number.isFinite(id) || quality === null) {
+    return res.status(400).json({ error: "Invalid public card id or rating" });
+  }
+
+  try {
+    const currentQ = await pool.query(
+      `
+      SELECT id, user_id, public_deck_id, card_id, ease_factor, repetitions, interval_days
+      FROM user_public_card
+      WHERE id = $1 AND user_id = $2
+      `,
+      [id, req.user.user_id]
+    );
+
+    if (currentQ.rowCount === 0) {
+      return res.status(404).json({ error: "Public card not found" });
+    }
+
+    const row = currentQ.rows[0];
+
+    const updates = sm2Update(
+      {
+        ease_factor: Number(row.ease_factor),
+        repetitions: Number(row.repetitions),
+        interval_days: Number(row.interval_days),
+      },
+      quality
+    );
+
+    const updatedQ = await pool.query(
+      `
+      UPDATE user_public_card
+      SET
+        ease_factor = $1,
+        repetitions = $2,
+        interval_days = $3,
+        due_date = $4,
+        last_reviewed = $5
+      WHERE id = $6
+      RETURNING
+        id,
+        user_id,
+        public_deck_id,
+        card_id,
+        ease_factor,
+        repetitions,
+        interval_days,
+        due_date,
+        last_reviewed
+      `,
+      [
+        updates.ease_factor,
+        updates.repetitions,
+        updates.interval_days,
+        updates.due_date,
+        updates.last_reviewed,
+        id,
+      ]
+    );
+
+    res.json(updatedQ.rows[0]);
+  } catch (err) {
+    console.error("POST /api/public-cards/:id/rate error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.patch("/api/public-cards/:id/toggle-review", authenticate, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: "Invalid public card id" });
+  }
+
+  try {
+    const currentQ = await pool.query(
+      `
+      SELECT id, user_id, public_deck_id, card_id, due_date, last_reviewed
+      FROM user_public_card
+      WHERE id = $1 AND user_id = $2
+      `,
+      [id, req.user.user_id]
+    );
+
+    if (currentQ.rowCount === 0) {
+      return res.status(404).json({ error: "Public card not found" });
+    }
+
+    const updatedQ = await pool.query(
+      `
+      UPDATE user_public_card
+      SET
+        due_date = CASE WHEN due_date IS NULL THEN NOW() ELSE NULL END,
+        last_reviewed = CASE WHEN due_date IS NULL THEN last_reviewed ELSE NULL END
+      WHERE id = $1
+      RETURNING
+        id,
+        user_id,
+        public_deck_id,
+        card_id,
+        ease_factor,
+        interval_days,
+        repetitions,
+        due_date,
+        last_reviewed
+      `,
+      [id]
+    );
+
+    res.json(updatedQ.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/public-cards/:id/toggle-review error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.get("/api/bookmarked/:id", authenticate, async (req, res) => {
+  const publicDeckId = Number(req.params.id);
+
+  if (!Number.isFinite(publicDeckId)) {
+    return res.status(400).json({ error: "Invalid public deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Confirm the current user has actually bookmarked this deck
+    const deckQ = await client.query(
+      `
+      SELECT
+        pd.id AS public_deck_id,
+        pd.deck_id,
+        pd.user_id,
+        pd.published_at,
+        d.deck_name,
+        d.subject,
+        d.course_number,
+        d.instructor,
+        d.created_at AS deck_created_at,
+        true AS is_saved
+      FROM user_public_deck upd
+      JOIN public_deck pd
+        ON pd.id = upd.public_deck_id
+      JOIN deck d
+        ON d.id = pd.deck_id
+      WHERE upd.user_id = $1
+        AND pd.id = $2
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    if (deckQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Bookmarked deck not found" });
+    }
+
+    const deck = deckQ.rows[0];
+
+    // Backfill missing user_public_card rows for any new author cards
+    await client.query(
+      `
+      INSERT INTO user_public_card (user_id, public_deck_id, card_id)
+      SELECT
+        $1,
+        $2,
+        c.id
+      FROM card c
+      WHERE c.deck_id = $3
+        AND NOT EXISTS (
+          SELECT 1
+          FROM user_public_card upc
+          WHERE upc.user_id = $1
+            AND upc.public_deck_id = $2
+            AND upc.card_id = c.id
+        )
+      `,
+      [req.user.user_id, publicDeckId, deck.deck_id]
+    );
+
+    // Return bookmarker's personal review rows joined with shared card content
+    const cardsQ = await client.query(
+      `
+      SELECT
+        upc.id,
+        upc.public_deck_id,
+        upc.card_id,
+        c.card_front,
+        c.card_back,
+        upc.ease_factor,
+        upc.interval_days,
+        upc.repetitions,
+        upc.due_date,
+        upc.last_reviewed
+      FROM user_public_card upc
+      JOIN card c
+        ON c.id = upc.card_id
+      WHERE upc.user_id = $1
+        AND upc.public_deck_id = $2
+      ORDER BY upc.id
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ...deck,
+      cards: cardsQ.rows,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("GET /api/bookmarked/:id error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
+
 // #############################################
 // #############################################
 
