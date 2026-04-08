@@ -1,9 +1,8 @@
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import DeckUI from "./CardDeck";
 import AppShell from "../components/AppShell"
 
 export default function CourseView() {
-  const navigate = useNavigate();
   const { id } = useParams();
 
   const deckId = Number(id);
