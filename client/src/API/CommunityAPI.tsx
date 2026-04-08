@@ -84,3 +84,24 @@ export async function copyPublicDeck(
   });
 }
 
+export async function ratePublicCard(
+  id: number,
+  rating: "again" | "hard" | "good" | "easy"
+) {
+  return api(`/api/public-cards/${id}/rate`, {
+    method: "POST",
+    body: JSON.stringify({ rating }),
+  });
+}
+
+export async function togglePublicCardReviewPile(id: number) {
+  return api(`/api/public-cards/${id}/toggle-review`, {
+    method: "PATCH",
+  });
+}
+
+export async function getBookmarkedDeckWithCards(
+  publicDeckId: number
+): Promise<PublicDeckWithCards> {
+  return api<PublicDeckWithCards>(`/api/bookmarked/${publicDeckId}`);
+}
