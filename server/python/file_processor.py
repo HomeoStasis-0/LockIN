@@ -1,4 +1,3 @@
-
 import os
 import json
 import sys
@@ -32,6 +31,15 @@ except ImportError:
 
 load_dotenv()
 
+# Set TESSDATA_PREFIX for Tesseract OCR if not already set
+if not os.environ.get("TESSDATA_PREFIX"):
+    heroku_tessdata = "/app/.apt/usr/share/tesseract-ocr/5/tessdata"
+    local_tessdata = "/usr/share/tesseract-ocr/5/tessdata"
+    if os.path.exists(heroku_tessdata):
+        os.environ["TESSDATA_PREFIX"] = heroku_tessdata
+    elif os.path.exists(local_tessdata):
+        os.environ["TESSDATA_PREFIX"] = local_tessdata
+
 # 1. Setup Groq Client
 client = Groq(
     api_key=os.environ.get("GROQ_API_KEY"),
@@ -61,6 +69,46 @@ def resolve_tesseract_cmd():
             return candidate
 
     return None
+
+
+def clean_extracted_text(text):
+    """Sanitize extracted text to remove corrupted characters while preserving mathematical content."""
+    if not text:
+        return text
+    
+    # Remove control characters and other invisible/corrupting characters
+    # Keep: newlines, tabs, common punctuation, Unicode symbols
+    text = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+    
+    # Fix common OCR errors: ligatures and common replacements only
+    # Don't touch Unicode math symbols - the AI will handle them
+    replacements = {
+        'ﬁ': 'fi',      # fi ligature
+        'ﬂ': 'fl',      # fl ligature
+        'ﬀ': 'ff',      # ff ligature
+        '–': '-',       # en-dash to hyphen
+        '—': '-',       # em-dash to hyphen
+        ''': "'",       # curly single quotes
+        ''': "'",
+        '"': '"',       # curly double quotes
+        '"': '"',
+        '„': '"',
+        '‟': '"',
+    }
+    
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
+    
+    # Clean up excessive whitespace but preserve structure
+    text = re.sub(r' +', ' ', text)      # Multiple spaces to single
+    text = re.sub(r'\n\n+', '\n\n', text)  # Multiple newlines to double
+    text = re.sub(r'\t+', '\t', text)    # Multiple tabs to single
+    
+    # Remove trailing whitespace from lines
+    lines = [line.rstrip() for line in text.split('\n')]
+    text = '\n'.join(lines)
+    
+    return text.strip()
 
 # ==================== FILE EXTRACTION FUNCTIONS ====================
 
@@ -241,17 +289,23 @@ def extract_text_from_file(file_path):
     print(f"Processing file: {file_path} (type: {ext})", file=sys.stderr)
     
     if ext == ".pdf":
-        return extract_text_from_pdf(file_path)
+        text = extract_text_from_pdf(file_path)
     elif ext == ".pptx":
-        return extract_text_from_pptx(file_path)
+        text = extract_text_from_pptx(file_path)
     elif ext == ".docx":
-        return extract_text_from_docx(file_path)
+        text = extract_text_from_docx(file_path)
     elif ext in [".txt", ".md", ".markdown", ".csv", ".json", ".rtf"]:
-        return extract_text_from_plain_text(file_path)
+        text = extract_text_from_plain_text(file_path)
     else:
         # Try to read as plain text for unknown formats
         print(f"Unknown format {ext}, attempting to read as text...", file=sys.stderr)
-        return extract_text_from_plain_text(file_path)
+        text = extract_text_from_plain_text(file_path)
+    
+    # Clean the extracted text to sanitize corrupted characters
+    if text:
+        text = clean_extracted_text(text)
+    
+    return text
 
 
 # ==================== TEXT CHUNKING & DEDUPLICATION ====================
@@ -447,14 +501,15 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
         prompt = (
             "Create concise, high-quality study materials from these notes. "
             "Cover distinct concepts and avoid duplicates. "
-            "CRITICAL: format ALL mathematical notation with LaTeX delimiters. "
-            "Every variable/equation/symbol must appear as $...$ or $$...$$. "
+            "CRITICAL MATH FORMATTING RULES:\n"
+            "1. Convert ALL Unicode math symbols (α β γ δ ε ζ η θ λ μ ξ π ρ σ τ υ φ ψ ω Γ Δ Λ Π Σ Ω) to LaTeX commands (\\alpha \\beta, etc.)\n"
+            "2. Wrap ALL mathematical notation with $ $ for inline or $$ $$ for display math.\n"
+            "3. Use LaTeX commands: \\int \\sum \\prod \\frac{a}{b} \\sqrt{x} \\times \\div \\le \\ge \\ne \\infty \\pm etc.\n"
+            "4. Use subscripts_{x} and superscripts^{2} with proper braces.\n"
+            "5. Never output raw unicode math symbols - convert to LaTeX equivalents.\n"
+            "6. Every variable, equation, and symbol must be properly delimited.\n\n"
             "For flashcards: use clear term/question on front and precise explanation on back. "
-            "Formatting rules: when mathematical notation appears, return it in Markdown + LaTeX style. "
-            "Use $...$ for inline math and $$...$$ for display math. "
-            "Prefer LaTeX commands like \\int, \\to, \\infty, \\frac{a}{b}, and subscripts/superscripts. "
-            "Do not output raw unicode math-only strings without LaTeX delimiters. "
-            "For quiz: include plausible distractors and ensure correct_answer exactly matches one option.\n\n"
+            "For quiz: include 4 plausible options and ensure correct_answer exactly matches one option.\n\n"
             f"Chunk {chunk_index + 1} of {total_chunks}.\n"
             f"Lecture Notes:\n{context_text}"
         )
@@ -468,7 +523,8 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
                         {
                             "role": "system",
                             "content": "You are a helpful study assistant. Return only schema-compliant JSON. "
-                            "Math must always be wrapped in $...$ or $$...$$.",
+                            "ALL math must use LaTeX formatting with $...$ delimiters. "
+                            "Convert Unicode math symbols to LaTeX commands immediately.",
                         },
                         {"role": "user", "content": prompt},
                     ],
