@@ -88,10 +88,10 @@ def clean_extracted_text(text):
         'ﬀ': 'ff',      # ff ligature
         '–': '-',       # en-dash to hyphen
         '—': '-',       # em-dash to hyphen
-        ''': "'",       # curly single quotes
-        ''': "'",
-        '"': '"',       # curly double quotes
-        '"': '"',
+        '\u2018': "'",  # left single quote
+        '\u2019': "'",  # right single quote
+        '\u201c': '"',  # left double quote
+        '\u201d': '"',  # right double quote
         '„': '"',
         '‟': '"',
     }
