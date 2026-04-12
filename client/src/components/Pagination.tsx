@@ -1,3 +1,5 @@
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
 type PaginationProps = {
   currentPage: number;
   totalPages: number;
@@ -20,7 +22,7 @@ export default function Pagination({
         disabled={currentPage === 1}
         className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 disabled:opacity-50"
       >
-        Previous
+        <ChevronLeft />
       </button>
 
       {pages.map((page) => (
@@ -43,7 +45,7 @@ export default function Pagination({
         disabled={currentPage === totalPages}
         className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 disabled:opacity-50"
       >
-        Next
+        <ChevronRight />
       </button>
     </div>
   );

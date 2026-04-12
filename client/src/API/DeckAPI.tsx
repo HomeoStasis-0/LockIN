@@ -1,5 +1,5 @@
-import type { CardRow, DeckRow, DeckWithCards } from "../types/DeckTypes";
 import type { PublicDeckRow } from "../types/CommunityTypes";
+import type { CardRow, DeckRow, DeckWithCards } from "../types/DeckTypes";
 
 function normalizeCard(c: any) {
   return {

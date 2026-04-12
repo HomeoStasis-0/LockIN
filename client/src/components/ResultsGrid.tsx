@@ -1,14 +1,12 @@
 import type { PublicDeckRow } from "../types/CommunityTypes";
-//import { useNavigate, Link } from "react-router-dom";
-
-
+import { useNavigate } from "react-router-dom";
 
 type ResultsGridProps = {
   results: PublicDeckRow[];
   loading?: boolean;
   error?: string;
   onSave?: (publicDeckId: number) => void;
-  onCopy?: (publicDecckId: number) => void;
+  onCopy?: (publicDeckId: number) => void;
 };
 
 export default function ResultsGrid({
@@ -18,6 +16,7 @@ export default function ResultsGrid({
   onSave,
   onCopy,
 }: ResultsGridProps) {
+  const navigate = useNavigate();
 
   if (loading) {
     return (
@@ -55,18 +54,28 @@ export default function ResultsGrid({
               {deck.deck_name}
             </h2>
 
-            <button
-              onClick={() => onSave?.(deck.public_deck_id)}
-              className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
-            >
-              Bookmark
-            </button>
-            <button
-              onClick={() => onCopy?.(deck.public_deck_id)}
-              className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
-            >
-              Copy
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => navigate(`/community/decks/${deck.public_deck_id}`)}
+                className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+              >
+                View
+              </button>
+
+              <button
+                onClick={() => onSave?.(deck.public_deck_id)}
+                className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+              >
+                Bookmark
+              </button>
+
+              <button
+                onClick={() => onCopy?.(deck.public_deck_id)}
+                className="rounded-xl border border-blue-300 px-3 py-2 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+              >
+                Copy
+              </button>
+            </div>
           </div>
 
           <div className="mt-3 space-y-1 text-sm text-slate-600">

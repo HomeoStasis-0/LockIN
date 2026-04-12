@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
-import type { CardRow } from "../types/DeckTypes";
+import type { PublicDeckCardRow } from "../types/CommunityTypes";
 import { styles } from "../styles/DeckStyles";
-import CardRowView from "../components/CardRow";
+import RichCardText from "../components/RichCardText";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-const PAGE_SIZE = 3;
+const PAGE_SIZE = 5;
 
-export default function LearnView(props: {
-  cards: CardRow[];
-  onEdit: (c: CardRow) => void;
-  onRemove: (id: number) => void;
-  onToggleReviewPile: (id: number) => void;
+export default function PreviewDeckView(props: {
+  cards: PublicDeckCardRow[];
+  onSave?: () => void;
+  onCopy?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -50,16 +49,45 @@ export default function LearnView(props: {
     setPage((prev) => Math.min(totalPages, prev + 1));
   }
 
+  if (props.cards.length === 0) {
+    return (
+      <section style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <div style={styles.h2}>Deck Preview</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={styles.btn} onClick={props.onSave} disabled={!props.onSave}>
+              Bookmark
+            </button>
+            <button style={styles.btn} onClick={props.onCopy} disabled={!props.onCopy}>
+              Copy
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.empty}>This deck has no cards yet.</div>
+      </section>
+    );
+  }
+
   return (
     <section style={styles.section}>
       <div style={styles.sectionHeader}>
-        <div style={styles.h2}>Cards (show all)</div>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search cards…"
-          style={styles.search}
-        />
+        <div style={styles.h2}>Deck Preview</div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search cards…"
+            style={styles.search}
+          />
+          <button style={styles.btn} onClick={props.onSave} disabled={!props.onSave}>
+            Bookmark
+          </button>
+          <button style={styles.btn} onClick={props.onCopy} disabled={!props.onCopy}>
+            Copy
+          </button>
+        </div>
       </div>
 
       {filtered.length === 0 ? (
@@ -73,14 +101,17 @@ export default function LearnView(props: {
 
           <div style={styles.cardGrid}>
             {paginatedCards.map((c) => (
-              <CardRowView
-                key={c.id}
-                card={c}
-                onEdit={props.onEdit}
-                onRemove={props.onRemove}
-                onToggleReviewPile={props.onToggleReviewPile}
-                mode="learn"
-              />
+              <div key={c.id} style={styles.cardRow}>
+                <div style={styles.cardFront}>
+                  <RichCardText text={c.card_front} style={styles.richText} />
+                </div>
+
+                <div style={{ height: 10 }} />
+
+                <div style={styles.cardBack}>
+                  <RichCardText text={c.card_back} style={styles.richText} />
+                </div>
+              </div>
             ))}
           </div>
 
@@ -109,7 +140,7 @@ export default function LearnView(props: {
       )}
 
       <div style={styles.tip}>
-        Review pile is currently derived from whether <code>due_date</code> is null or not.
+        This is a read-only preview. Bookmark or copy the deck to start studying with your own progress.
       </div>
     </section>
   );

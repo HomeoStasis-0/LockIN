@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { Lock, LockOpen, LayoutDashboard, Search, CircleUserRound } from "lucide-react";
 import { useState } from "react";
+import logo from "../assets/logo.png";
 
 type NavItemProps = {
   icon: React.ReactNode;
@@ -54,7 +55,7 @@ export default function SideBar() {
             className={`overflow-hidden transition-all duration-300
               ${expanded ? "w-24 opacity-100" : "w-0 opacity-0"}`}
           >
-            <img src="" alt="Logo" />
+            <img src={logo} alt="Logo" />
           </div>
 
           <button

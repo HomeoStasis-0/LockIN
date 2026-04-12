@@ -9,15 +9,24 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const multer = require("multer");
 const extractZip = require("extract-zip");
-const { updateCardDb } = require("./utils/spaced_repetition");
+const { sm2Update, updateCardDb } = require("./utils/spaced_repetition");
 const { generateStudyMaterials, generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
-
+const nodemailer = require("nodemailer");
+const crypto = require('crypto');
 
 const app = express();
 
 const uploadDir = path.join(__dirname, "..", "uploads");
 const extractDir = path.join(__dirname, "..", "uploads", "extracted");
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_PASS,
+  },
+});
 
 // Supported file extensions
 const SUPPORTED_EXTENSIONS = [".pdf", ".pptx", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".rtf", ".zip"];
@@ -376,6 +385,194 @@ const generateToken = (user) => {
   );
 };
 
+const googleCookieOptions = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: process.env.NODE_ENV === "production",
+  maxAge: 10 * 60 * 1000,
+};
+
+function getGoogleRedirectUri(req) {
+  if (process.env.GOOGLE_REDIRECT_URI) {
+    return process.env.GOOGLE_REDIRECT_URI;
+  }
+
+  return `${req.protocol}://${req.get("host")}/auth/google/callback`;
+}
+
+function getFrontendPath(req, pathName) {
+  const normalizedPath = pathName.startsWith("/") ? pathName : `/${pathName}`;
+
+  if (process.env.CLIENT_ORIGIN) {
+    return `${process.env.CLIENT_ORIGIN}${normalizedPath}`;
+  }
+
+  if (process.env.NODE_ENV === "production") {
+    return normalizedPath;
+  }
+
+  return `http://localhost:5173${normalizedPath}`;
+}
+
+function toUsernameBase(profile) {
+  const source = profile?.preferred_username || profile?.name || profile?.email || "user";
+  const cleaned = String(source)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 24);
+
+  return cleaned || "user";
+}
+
+async function findOrCreateGoogleUser(profile) {
+  const email = String(profile?.email || "").toLowerCase().trim();
+  if (!email) {
+    throw new Error("Google account does not include an email address");
+  }
+
+  const existing = await pool.query(
+    `SELECT user_id, username, email
+     FROM users
+     WHERE email=$1`,
+    [email]
+  );
+
+  if (existing.rowCount > 0) {
+    return existing.rows[0];
+  }
+
+  const base = toUsernameBase(profile);
+  const generatedSecret = crypto.randomBytes(32).toString("hex");
+  const passwordHash = await bcrypt.hash(generatedSecret, 10);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const suffix = attempt === 0 ? "" : `_${crypto.randomBytes(2).toString("hex")}`;
+    const username = `${base}${suffix}`.slice(0, 30);
+
+    try {
+      const inserted = await pool.query(
+        `INSERT INTO users (username, email, password_hash)
+         VALUES ($1, $2, $3)
+         RETURNING user_id, username, email`,
+        [username, email, passwordHash]
+      );
+      return inserted.rows[0];
+    } catch (err) {
+      if (err?.code === "23505") {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error("Failed to create user from Google profile");
+}
+
+app.get("/auth/google", (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return res.status(500).json({ error: "Google OAuth is not configured" });
+  }
+
+  const state = crypto.randomBytes(24).toString("hex");
+  res.cookie("google_oauth_state", state, googleCookieOptions);
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: getGoogleRedirectUri(req),
+    response_type: "code",
+    scope: "openid email profile",
+    state,
+    prompt: "select_account",
+  });
+
+  res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+app.get("/auth/google/callback", async (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return res.redirect(getFrontendPath(req, "/login?oauth=not_configured"));
+  }
+
+  const { code, state, error } = req.query;
+
+  if (error) {
+    return res.redirect(getFrontendPath(req, "/login?oauth=denied"));
+  }
+
+  if (!code || !state || state !== req.cookies.google_oauth_state) {
+    return res.redirect(getFrontendPath(req, "/login?oauth=state_mismatch"));
+  }
+
+  res.clearCookie("google_oauth_state", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+
+  try {
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: String(code),
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: getGoogleRedirectUri(req),
+        grant_type: "authorization_code",
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      const details = await tokenResponse.text();
+      console.error("Google token exchange failed", details);
+      return res.redirect(getFrontendPath(req, "/login?oauth=token_failed"));
+    }
+
+    const tokenPayload = await tokenResponse.json();
+    const accessToken = tokenPayload.access_token;
+
+    if (!accessToken) {
+      return res.redirect(getFrontendPath(req, "/login?oauth=token_missing"));
+    }
+
+    const profileResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!profileResponse.ok) {
+      const details = await profileResponse.text();
+      console.error("Google userinfo failed", details);
+      return res.redirect(getFrontendPath(req, "/login?oauth=profile_failed"));
+    }
+
+    const profile = await profileResponse.json();
+    if (!profile.email || profile.email_verified === false) {
+      return res.redirect(getFrontendPath(req, "/login?oauth=email_unverified"));
+    }
+
+    const user = await findOrCreateGoogleUser(profile);
+    const token = generateToken(user);
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+    });
+
+    return res.redirect(getFrontendPath(req, "/dashboard"));
+  } catch (err) {
+    console.error("Google OAuth callback error", err);
+    return res.redirect(getFrontendPath(req, "/login?oauth=failed"));
+  }
+});
+
 // Registration
 app.post("/auth/register", async (req, res) => {
   const { username, email, password } = req.body;
@@ -551,6 +748,14 @@ async function processMultipleFiles(filePaths) {
     quiz: allQuiz,
     errors,
   };
+}
+
+function hasOcrRuntimeIssue(errors = []) {
+  return Array.isArray(errors)
+    && errors.some((m) => {
+      const msg = String(m || "");
+      return msg.includes("OCR_UNAVAILABLE") || msg.includes("tesseract binary not found");
+    });
 }
 
 app.use("/api/community", createCommunityRouter(pool, authenticate));
@@ -771,11 +976,14 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), as
     if (flashcards.length === 0) {
       const noTextError = Array.isArray(studySet?.errors)
         && studySet.errors.some((m) => String(m).includes("NO_EXTRACTABLE_TEXT"));
+      const ocrRuntimeIssue = hasOcrRuntimeIssue(studySet?.errors);
 
       if (noTextError) {
         return res.status(422).json({
           error: "No extractable text found in uploaded file",
-          message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+          message: ocrRuntimeIssue
+            ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
+            : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
           processingErrors: studySet.errors,
           quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
         });
@@ -845,9 +1053,12 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), as
     console.error(err);
     const errMsg = err instanceof Error ? err.message : "Unknown error";
     if (errMsg.includes("NO_EXTRACTABLE_TEXT")) {
+      const ocrRuntimeIssue = errMsg.includes("OCR_UNAVAILABLE") || errMsg.includes("tesseract binary not found");
       return res.status(422).json({
         error: "No extractable text found in uploaded file",
-        message: "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+        message: ocrRuntimeIssue
+          ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
+          : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
       });
     }
 
@@ -908,6 +1119,7 @@ app.post("/api/cards/:id/rate", async (req, res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
 
 app.patch("/api/cards/:id", async (req, res) => {
   const id = Number(req.params.id);
@@ -1268,4 +1480,349 @@ app.delete("/api/saved/:id", authenticate, async (req, res) => {
   }
 });
 
+// ######### FORGOT PASSWORD ENDPOINTS #########
+// #############################################
+app.post("/auth/forgot-password", async (req, res) => {
+  const { login } = req.body ?? {};
+  if (!login) return res.status(400).json({ error: "login required" });
+ 
+  try {
+    const result = await pool.query(
+      `SELECT user_id, email FROM users WHERE username = $1 OR email = $1`,
+      [login]
+    );
+ 
+    // Always return 200 — never reveal whether the account exists
+    if (!result.rows.length) {
+      return res.json({ ok: true });
+    }
+ 
+    const user = result.rows[0];
+ 
+    // 6-digit code
+    const code = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+ 
+    // Store hashed so plain text isn't sitting in the DB
+    const hashedCode = await bcrypt.hash(code, 8);
+ 
+    await pool.query(
+      `UPDATE users
+       SET reset_code = $1, reset_code_expires = $2
+       WHERE user_id = $3`,
+      [hashedCode, expiresAt, user.user_id]
+    );
+ 
+    await transporter.sendMail({
+      from: `"LockIN" <${process.env.GMAIL_USER}>`,
+      to: user.email,
+      subject: "Your password reset code",
+      html: `
+        <div style="font-family: sans-serif; max-width: 420px; margin: auto; padding: 2rem;">
+          <h2 style="color: #4f46e5; margin-bottom: 0.5rem;">Password Reset</h2>
+          <p style="color: #374151;">
+            Use the code below to reset your password.
+            It expires in <strong>15 minutes</strong>.
+          </p>
+          <div style="
+            font-size: 2.5rem;
+            font-weight: bold;
+            letter-spacing: 0.4em;
+            text-align: center;
+            background: #eef2ff;
+            color: #4338ca;
+            padding: 1.25rem;
+            border-radius: 12px;
+            margin: 1.5rem 0;
+          ">
+            ${code}
+          </div>
+          <p style="color: #6b7280; font-size: 0.875rem;">
+            If you didn't request this, you can safely ignore this email.
+          </p>
+        </div>
+      `,
+    });
+ 
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("forgot-password error:", err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+ 
+app.post("/auth/reset-password", async (req, res) => {
+  const { login, code, newPassword } = req.body ?? {};
+ 
+  if (!login || !code || !newPassword) {
+    return res.status(400).json({ error: "login, code, and newPassword are required" });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: "Password must be at least 8 characters" });
+  }
+ 
+  try {
+    const result = await pool.query(
+      `SELECT user_id, reset_code, reset_code_expires
+       FROM users
+       WHERE username = $1 OR email = $1`,
+      [login]
+    );
+ 
+    const user = result.rows[0];
+    const invalid = () => res.status(400).json({ error: "Invalid or expired code." });
+ 
+    if (!user || !user.reset_code || !user.reset_code_expires) return invalid();
+    if (new Date() > new Date(user.reset_code_expires)) return invalid();
+ 
+    const codeMatches = await bcrypt.compare(code, user.reset_code);
+    if (!codeMatches) return invalid();
+ 
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+ 
+    await pool.query(
+      `UPDATE users
+       SET password_hash = $1,
+           reset_code = NULL,
+           reset_code_expires = NULL
+       WHERE user_id = $2`,
+      [hashedPassword, user.user_id]
+    );
+ 
+    res.json({ ok: true, message: "Password updated successfully" });
+  } catch (err) {
+    console.error("reset-password error:", err);
+    res.status(500).json({ error: "Something went wrong" });
+  }
+});
+
+app.post("/api/public-cards/:id/rate", authenticate, async (req, res) => {
+  const id = Number(req.params.id);
+  const rating = req.body?.rating;
+
+  const quality = ratingToQuality(rating);
+  if (!Number.isFinite(id) || quality === null) {
+    return res.status(400).json({ error: "Invalid public card id or rating" });
+  }
+
+  try {
+    const currentQ = await pool.query(
+      `
+      SELECT id, user_id, public_deck_id, card_id, ease_factor, repetitions, interval_days
+      FROM user_public_card
+      WHERE id = $1 AND user_id = $2
+      `,
+      [id, req.user.user_id]
+    );
+
+    if (currentQ.rowCount === 0) {
+      return res.status(404).json({ error: "Public card not found" });
+    }
+
+    const row = currentQ.rows[0];
+
+    const updates = sm2Update(
+      {
+        ease_factor: Number(row.ease_factor),
+        repetitions: Number(row.repetitions),
+        interval_days: Number(row.interval_days),
+      },
+      quality
+    );
+
+    const updatedQ = await pool.query(
+      `
+      UPDATE user_public_card
+      SET
+        ease_factor = $1,
+        repetitions = $2,
+        interval_days = $3,
+        due_date = $4,
+        last_reviewed = $5
+      WHERE id = $6
+      RETURNING
+        id,
+        user_id,
+        public_deck_id,
+        card_id,
+        ease_factor,
+        repetitions,
+        interval_days,
+        due_date,
+        last_reviewed
+      `,
+      [
+        updates.ease_factor,
+        updates.repetitions,
+        updates.interval_days,
+        updates.due_date,
+        updates.last_reviewed,
+        id,
+      ]
+    );
+
+    res.json(updatedQ.rows[0]);
+  } catch (err) {
+    console.error("POST /api/public-cards/:id/rate error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.patch("/api/public-cards/:id/toggle-review", authenticate, async (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: "Invalid public card id" });
+  }
+
+  try {
+    const currentQ = await pool.query(
+      `
+      SELECT id, user_id, public_deck_id, card_id, due_date, last_reviewed
+      FROM user_public_card
+      WHERE id = $1 AND user_id = $2
+      `,
+      [id, req.user.user_id]
+    );
+
+    if (currentQ.rowCount === 0) {
+      return res.status(404).json({ error: "Public card not found" });
+    }
+
+    const updatedQ = await pool.query(
+      `
+      UPDATE user_public_card
+      SET
+        due_date = CASE WHEN due_date IS NULL THEN NOW() ELSE NULL END,
+        last_reviewed = CASE WHEN due_date IS NULL THEN last_reviewed ELSE NULL END
+      WHERE id = $1
+      RETURNING
+        id,
+        user_id,
+        public_deck_id,
+        card_id,
+        ease_factor,
+        interval_days,
+        repetitions,
+        due_date,
+        last_reviewed
+      `,
+      [id]
+    );
+
+    res.json(updatedQ.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/public-cards/:id/toggle-review error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.get("/api/bookmarked/:id", authenticate, async (req, res) => {
+  const publicDeckId = Number(req.params.id);
+
+  if (!Number.isFinite(publicDeckId)) {
+    return res.status(400).json({ error: "Invalid public deck id" });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    // Confirm the current user has actually bookmarked this deck
+    const deckQ = await client.query(
+      `
+      SELECT
+        pd.id AS public_deck_id,
+        pd.deck_id,
+        pd.user_id,
+        pd.published_at,
+        d.deck_name,
+        d.subject,
+        d.course_number,
+        d.instructor,
+        d.created_at AS deck_created_at,
+        true AS is_saved
+      FROM user_public_deck upd
+      JOIN public_deck pd
+        ON pd.id = upd.public_deck_id
+      JOIN deck d
+        ON d.id = pd.deck_id
+      WHERE upd.user_id = $1
+        AND pd.id = $2
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    if (deckQ.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ error: "Bookmarked deck not found" });
+    }
+
+    const deck = deckQ.rows[0];
+
+    // Backfill missing user_public_card rows for any new author cards
+    await client.query(
+      `
+      INSERT INTO user_public_card (user_id, public_deck_id, card_id)
+      SELECT
+        $1,
+        $2,
+        c.id
+      FROM card c
+      WHERE c.deck_id = $3
+        AND NOT EXISTS (
+          SELECT 1
+          FROM user_public_card upc
+          WHERE upc.user_id = $1
+            AND upc.public_deck_id = $2
+            AND upc.card_id = c.id
+        )
+      `,
+      [req.user.user_id, publicDeckId, deck.deck_id]
+    );
+
+    // Return bookmarker's personal review rows joined with shared card content
+    const cardsQ = await client.query(
+      `
+      SELECT
+        upc.id,
+        upc.public_deck_id,
+        upc.card_id,
+        c.card_front,
+        c.card_back,
+        upc.ease_factor,
+        upc.interval_days,
+        upc.repetitions,
+        upc.due_date,
+        upc.last_reviewed
+      FROM user_public_card upc
+      JOIN card c
+        ON c.id = upc.card_id
+      WHERE upc.user_id = $1
+        AND upc.public_deck_id = $2
+      ORDER BY upc.id
+      `,
+      [req.user.user_id, publicDeckId]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ...deck,
+      cards: cardsQ.rows,
+    });
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("GET /api/bookmarked/:id error:", err);
+    res.status(500).json({ error: "Database error" });
+  } finally {
+    client.release();
+  }
+});
+
+// #############################################
+// #############################################
+
 module.exports = app;
+

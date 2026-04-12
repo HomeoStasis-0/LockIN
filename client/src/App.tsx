@@ -8,6 +8,8 @@ import CourseView from "./pages/CourseView";
 import Community from "./pages/Community";
 import Account from "./pages/Account";
 import Bookmarked from "./views/BookmarkedView";
+import PublicDeck from "./pages/PublicDeck";
+import ForgotPassword from "./pages/ForgotPassword";
 import { useAuth } from "./context/AuthContext";
 
 function App() {
@@ -29,8 +31,10 @@ function App() {
       <Route path="/community" element={user ? <Community /> : <Navigate to="/login" replace />} />
       <Route path="/account" element={user ? <Account /> : <Navigate to="/login" replace />} />
       <Route path="/bookmarked/:id" element={user ? <Bookmarked /> : <Navigate to="/login" replace />} />
+      <Route path="/community/decks/:id" element={user ? <PublicDeck /> : <Navigate to="/login" replace />} />
       <Route path="/cards/" element={user ? <DeckUI deckId={1}/> : <Navigate to="/login" replace />} />
       <Route path="/courses/:id" element={user ? <CourseView /> : <Navigate to="/login" replace />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
     </Routes>
   );
 }

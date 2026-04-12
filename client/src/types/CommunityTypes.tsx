@@ -15,9 +15,16 @@ export type PublicDeckRow = {
 };
 
 export type PublicDeckCardRow = {
-  id: number;
+  id: number; // user_public_card id
   public_deck_id: number;
-  card_id: number;
+  card_id: number; // original card id
+  card_front: string;
+  card_back: string;
+  ease_factor: number;
+  interval_days: number;
+  repetitions: number;
+  due_date: string | null;
+  last_reviewed: string | null;
 };
 
 //stores public deck together with cards

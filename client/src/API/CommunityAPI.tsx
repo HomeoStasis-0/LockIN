@@ -1,4 +1,4 @@
-import type { PublicDeckRow, PublicDeckWithCards } from "../types/CommunityTypes"
+import type { PublicDeckCardRow, PublicDeckRow, PublicDeckWithCards } from "../types/CommunityTypes"
 
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -84,3 +84,24 @@ export async function copyPublicDeck(
   });
 }
 
+export async function ratePublicCard(
+  id: number,
+  rating: "again" | "hard" | "good" | "easy"
+): Promise<PublicDeckCardRow> {
+  return api<PublicDeckCardRow>(`/api/public-cards/${id}/rate`, {
+    method: "POST",
+    body: JSON.stringify({ rating }),
+  });
+}
+
+export async function togglePublicCardReviewPile(id: number): Promise<PublicDeckCardRow> {
+  return api<PublicDeckCardRow>(`/api/public-cards/${id}/toggle-review`, {
+    method: "PATCH",
+  });
+}
+
+export async function getBookmarkedDeckWithCards(
+  publicDeckId: number
+): Promise<PublicDeckWithCards> {
+  return api<PublicDeckWithCards>(`/api/bookmarked/${publicDeckId}`);
+}

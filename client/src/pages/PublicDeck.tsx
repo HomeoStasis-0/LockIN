@@ -1,18 +1,17 @@
 import { useParams } from "react-router-dom";
-import DeckUI from "./CardDeck";
-import AppShell from "../components/AppShell"
+import AppShell from "../components/AppShell";
+import PublicDeckView from "../views/PublicDeckView";
 
-export default function CourseView() {
+export default function PublicDeck() {
   const { id } = useParams();
-
   const deckId = Number(id);
 
   return (
-    <AppShell pageTitle="Your Courses">
+    <AppShell pageTitle="Community">
       {!Number.isFinite(deckId) ? (
         <div style={{ color: "crimson" }}>Invalid course/deck id in URL.</div>
       ) : (
-        <DeckUI deckId={deckId} />
+        <PublicDeckView deckId={deckId} />
       )}
     </AppShell>
   );

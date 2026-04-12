@@ -1,15 +1,17 @@
 import { Link } from "react-router-dom";
+import lockinLogo from "../assets/logo.png";
 
 export default function Landing() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-blue-200 to-indigo-300 p-6">
       <div className="text-center max-w-xl">
-        /* Replace this with actual logo later */
-        <h1 className="text-7xl font-extrabold text-indigo-900 mb-4 drop-shadow-lg"> 
-          LockIN
-        </h1>
+        <img
+          src={lockinLogo}
+          alt="LockIN"
+          className="w-full max-w-[540px] mx-auto mb-4 drop-shadow-lg"
+        />
         <p className="text-xl text-indigo-800 italic mb-10">
-          "insert motivational quote here"
+          Powered by Spaced Repetition and AI.
         </p>
 
         <Link
