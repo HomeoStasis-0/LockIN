@@ -103,6 +103,12 @@ function normalizeUnicodeMathOutsideMath(text: string): string {
   );
 }
 
+function isolateDisplayMathStarts(text: string): string {
+  return text.replace(/([^\n])\$\$(?=\s*\\(?:begin|\[)|\s*[A-Za-z0-9\\])/g, (_match, prefix: string) => {
+    return `${prefix}\n\n$$`;
+  });
+}
+
 function normalizeLatexEnvironments(text: string): string {
   let normalized = text;
 
@@ -205,11 +211,13 @@ function repairMalformedDisplayMathLines(text: string): string {
 function normalizeMathDelimiters(text: string): string {
   // Support common LaTeX delimiters from AI output in addition to $...$/$$...$$.
   const converted = normalizeLatexEnvironments(
-    text
+    isolateDisplayMathStarts(
+      text
     .replace(/\\\(([\s\S]+?)\\\)/g, (_m, inner) => `$${String(inner).trim()}$`)
     .replace(/\\\[([\s\S]+?)\\\]/g, (_m, inner) => `$$${String(inner).trim()}$$`)
     .replace(/∥([^∥]+)∥/g, "\\\\|$1\\\\|")
     .replace(/→/g, "\\\\to ")
+    )
   );
 
   const withUnicodeMath = normalizeUnicodeMathOutsideMath(converted);

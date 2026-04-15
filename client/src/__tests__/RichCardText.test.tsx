@@ -84,3 +84,15 @@ test('handles set and relation commands without explicit delimiters', () => {
   expect(container.querySelector('.katex')).not.toBeNull();
   expect(container.querySelector('.katex-error')).toBeNull();
 });
+
+test('separates inline text from mid-line display matrices', () => {
+  const input = String.raw`How does the theorem imply the quadratic form x^T A x is negative for the matrix A=$$\begin{pmatrix} 0&1&0\\1&0&2\\0&2&0 \end{pmatrix}?`;
+
+  const { container } = render(<RichCardText text={input} />);
+  const content = container.textContent ?? '';
+
+  expect(content).toContain('How does the theorem imply the quadratic form');
+  expect(content).toContain('for the matrix A');
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+});
