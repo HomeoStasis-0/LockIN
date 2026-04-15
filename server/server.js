@@ -1260,6 +1260,57 @@ app.post("/api/decks", authenticate, async (req, res) => {
   }
 });
 
+app.patch("/api/decks/:id", authenticate, async (req, res) => {
+  const deckId = Number(req.params.id);
+  if (!Number.isFinite(deckId)) {
+    return res.status(400).json({ error: "Invalid deck id" });
+  }
+
+  const {
+    deck_name,
+    subject = null,
+    course_number = null,
+    instructor = null,
+  } = req.body ?? {};
+
+  if (!deck_name || typeof deck_name !== "string" || !deck_name.trim()) {
+    return res.status(400).json({ error: "deck_name is required" });
+  }
+
+  if (course_number != null && !Number.isFinite(Number(course_number))) {
+    return res.status(400).json({ error: "course_number must be a number or null" });
+  }
+
+  try {
+    const q = await pool.query(
+      `UPDATE deck
+       SET deck_name = $1,
+           subject = $2,
+           course_number = $3,
+           instructor = $4
+       WHERE id = $5 AND user_id = $6
+       RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at`,
+      [
+        deck_name.trim(),
+        subject ?? null,
+        course_number == null ? null : Number(course_number),
+        instructor ?? null,
+        deckId,
+        req.user.user_id,
+      ]
+    );
+
+    if (q.rowCount === 0) {
+      return res.status(404).json({ error: "Deck not found" });
+    }
+
+    return res.json(q.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/decks/:id error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
 
 app.delete("/api/decks/:id", authenticate, async (req, res) => {
   const deckId = Number(req.params.id);
