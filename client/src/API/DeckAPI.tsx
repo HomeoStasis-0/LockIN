@@ -52,6 +52,55 @@ export type ImportPdfProgressHandlers = {
   onUploadComplete?: () => void;
 };
 
+type ImportJobStatusResponse = {
+  jobId: string;
+  status: "queued" | "running" | "succeeded" | "failed";
+  result?: ImportPdfResponse;
+  error?: {
+    status?: number;
+    error?: string;
+    message?: string;
+  };
+};
+
+function normalizeImportResponse(json: ImportPdfResponse): ImportPdfResponse {
+  return {
+    ...json,
+    insertedCards: (json.insertedCards ?? []).map(normalizeCard),
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function pollImportJob(jobId: string): Promise<ImportPdfResponse> {
+  const maxAttempts = 120;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const res = await fetch(`/api/decks/import-jobs/${jobId}`, {
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status} ${res.statusText}: ${text}`);
+    }
+
+    const job = (await res.json()) as ImportJobStatusResponse;
+    if (job.status === "succeeded" && job.result) {
+      return normalizeImportResponse(job.result);
+    }
+
+    if (job.status === "failed") {
+      throw new Error(job.error?.message || job.error?.error || "Import job failed.");
+    }
+
+    await delay(1500);
+  }
+
+  throw new Error("Import is taking longer than expected. Please try again in a moment.");
+}
+
 export async function getDeckWithCards(deckId: number): Promise<DeckWithCards> {
   const data = await api<any>(`/api/decks/${deckId}`);
 
@@ -123,8 +172,9 @@ export async function importPdfToDeck(
 
   return new Promise<ImportPdfResponse>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/decks/${deckId}/import-pdf`);
+    xhr.open("POST", `/api/decks/${deckId}/import-pdf?async=1`);
     xhr.withCredentials = true;
+    xhr.setRequestHeader("x-import-async", "1");
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable || event.total <= 0) return;
@@ -152,11 +202,21 @@ export async function importPdfToDeck(
       }
 
       try {
+        if (xhr.status === 202) {
+          const queued = JSON.parse(text) as { jobId?: string };
+          if (!queued.jobId) {
+            reject(new Error("Import job was queued but no job ID was returned."));
+            return;
+          }
+
+          void pollImportJob(queued.jobId)
+            .then(resolve)
+            .catch(reject);
+          return;
+        }
+
         const json = JSON.parse(text) as ImportPdfResponse;
-        resolve({
-          ...json,
-          insertedCards: (json.insertedCards ?? []).map(normalizeCard),
-        });
+        resolve(normalizeImportResponse(json));
       } catch (error) {
         reject(error instanceof Error ? error : new Error("Failed to parse upload response."));
       }
