@@ -3,7 +3,9 @@ import type React from "react";
 export const styles: Record<string, React.CSSProperties> = {
   page: {
     fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial",
-    padding: 20,
+    padding: "clamp(12px, 3vw, 20px)",
+    width: "100%",
+    boxSizing: "border-box",
     maxWidth: 1000,
     margin: "0 auto",
     color: "#111",
@@ -11,25 +13,26 @@ export const styles: Record<string, React.CSSProperties> = {
   header: {
     display: "flex",
     justifyContent: "space-between",
-    alignItems: "flex-end",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
     gap: 16,
     paddingBottom: 12,
     borderBottom: "1px solid #e5e7eb",
   },
-  deckTitle: { fontSize: 28, fontWeight: 800, letterSpacing: -0.3 },
+  deckTitle: { fontSize: "clamp(22px, 5vw, 28px)", fontWeight: 800, letterSpacing: -0.3 },
   deckMeta: { fontSize: 14, opacity: 0.7, marginTop: 2 },
-  statsRow: { display: "flex", gap: 10 },
+  statsRow: { display: "flex", gap: 10, flexWrap: "wrap" },
   stat: {
     border: "1px solid #e5e7eb",
     borderRadius: 12,
     padding: "10px 12px",
-    minWidth: 88,
+    minWidth: 72,
     textAlign: "center",
   },
   statValue: { fontSize: 18, fontWeight: 800 },
   statLabel: { fontSize: 12, opacity: 0.7 },
 
-  tabs: { display: "flex", gap: 8, marginTop: 14 },
+  tabs: { display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" },
   tab: {
     border: "1px solid #e5e7eb",
     borderRadius: 999,
@@ -53,7 +56,9 @@ export const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #e5e7eb",
     borderRadius: 10,
     padding: "8px 10px",
-    minWidth: 240,
+    width: "100%",
+    minWidth: 0,
+    maxWidth: 320,
   },
 
   cardGrid: { display: "grid", gridTemplateColumns: "1fr", gap: 10 },
@@ -81,16 +86,16 @@ export const styles: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     gap: 14,
   },
-  reviewPrompt: { fontSize: 20, fontWeight: 900 },
+  reviewPrompt: { fontSize: "clamp(18px, 4.6vw, 20px)", fontWeight: 900 },
   reviewAnswer: {
     borderTop: "1px dashed #e5e7eb",
     paddingTop: 12,
     fontSize: 14,
   },
   ratingRow: { display: "flex", gap: 8, flexWrap: "wrap" },
-  reviewFooter: { display: "flex", justifyContent: "space-between", alignItems: "center" },
+  reviewFooter: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 },
 
-  addGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 },
+  addGrid: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12 },
   panel: { border: "1px solid #e5e7eb", borderRadius: 14, padding: 12, background: "#fff" },
   label: { fontSize: 12, fontWeight: 700, opacity: 0.8, display: "block", marginTop: 8 },
   textarea: {

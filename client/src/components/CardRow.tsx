@@ -29,7 +29,7 @@ export default function CardRow(props: {
           }}
         />
       ) : (
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+        <div className="deck-card-row-layout" style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <RichCardText text={props.card.card_front} style={styles.cardFront} />
             <RichCardText text={props.card.card_back} style={styles.cardBack} />
@@ -38,7 +38,7 @@ export default function CardRow(props: {
             </div>
           </div>
 
-          <div style={styles.cardActions}>
+          <div className="deck-card-actions" style={styles.cardActions}>
             <label style={styles.checkbox}>
               <input
                 type="checkbox"

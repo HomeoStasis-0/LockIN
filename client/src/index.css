@@ -1,1 +1,29 @@
 @import "tailwindcss";
+
+.deck-card-row-layout {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.deck-card-actions {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 8px;
+}
+
+@media (max-width: 768px) {
+	.deck-card-row-layout {
+		flex-direction: column;
+	}
+
+	.deck-card-actions {
+		align-items: stretch;
+		width: 100%;
+	}
+
+	.deck-card-actions button {
+		width: 100%;
+	}
+}
