@@ -12,6 +12,7 @@ import {
   deleteCard,
   rateCard as apiRateCard,
   importPdfToDeck,
+  type ImportPdfProgressHandlers,
 } from "../API/DeckAPI";
 
 function isInReviewPile(card: CardRow) {
@@ -104,9 +105,9 @@ export default function DeckUI({ deckId }: { deckId: number }) {
     setDeck((d) => (d ? { ...d, cards: d.cards.map((c) => (c.id === updated.id ? updated : c)) } : d));
   }
 
-  async function handleImportPdf(file: File) {
+  async function handleImportPdf(file: File, handlers?: ImportPdfProgressHandlers) {
     if (!deck) return { inserted: 0 };
-    const result = await importPdfToDeck(deck.id, file);
+    const result = await importPdfToDeck(deck.id, file, handlers);
     setDeck((d) => (d ? { ...d, cards: [...result.insertedCards, ...d.cards] } : d));
     return {
       inserted: result.flashcards?.inserted ?? result.insertedCards.length,

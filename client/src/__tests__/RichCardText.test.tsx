@@ -51,3 +51,36 @@ test('renders displaystyle/limit/integral chain without leaking latex commands',
   expect(container.querySelector('.katex')).not.toBeNull();
   expect(container.querySelector('.katex-error')).toBeNull();
 });
+
+test('renders amsmath display environments as block math', () => {
+  const input = String.raw`We can write the optimization as:
+\begin{align}
+f(x) &= x^2 + 1 \\
+g(x) &= \operatorname{sin}(x) + \sqrt x
+\end{align}`;
+
+  const { container } = render(<RichCardText text={input} />);
+
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+  expect(container.textContent ?? '').toContain('We can write the optimization as:');
+});
+
+test('normalizes unicode math symbols into latex commands', () => {
+  const input = String.raw`Let x ∈ ℝ and y ∈ ℕ, with A ⊆ B, A ≠ B, and \sqrt n ≥ 0.`;
+
+  const { container } = render(<RichCardText text={input} />);
+
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+  expect(container.textContent ?? '').toContain('Let x');
+});
+
+test('handles set and relation commands without explicit delimiters', () => {
+  const input = String.raw`For every x \in A, we have x \subseteq B and y \operatorname{rank}(M).`;
+
+  const { container } = render(<RichCardText text={input} />);
+
+  expect(container.querySelector('.katex')).not.toBeNull();
+  expect(container.querySelector('.katex-error')).toBeNull();
+});

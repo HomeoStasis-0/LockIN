@@ -47,6 +47,11 @@ export type ImportPdfResponse = {
   }>;
 };
 
+export type ImportPdfProgressHandlers = {
+  onProgress?: (progress: number) => void;
+  onUploadComplete?: () => void;
+};
+
 export async function getDeckWithCards(deckId: number): Promise<DeckWithCards> {
   const data = await api<any>(`/api/decks/${deckId}`);
 
@@ -108,27 +113,57 @@ export async function rateCard(input: {
   return normalizeCard(c);
 }
 
-export async function importPdfToDeck(deckId: number, file: File): Promise<ImportPdfResponse> {
+export async function importPdfToDeck(
+  deckId: number,
+  file: File,
+  handlers: ImportPdfProgressHandlers = {}
+): Promise<ImportPdfResponse> {
   const data = new FormData();
   data.append("pdf", file);
 
-  const res = await fetch(`/api/decks/${deckId}/import-pdf`, {
-    method: "POST",
-    credentials: "include",
-    body: data,
+  return new Promise<ImportPdfResponse>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/decks/${deckId}/import-pdf`);
+    xhr.withCredentials = true;
+
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) return;
+      handlers.onProgress?.(Math.round((event.loaded / event.total) * 100));
+    };
+
+    xhr.upload.onload = () => {
+      handlers.onUploadComplete?.();
+    };
+
+    xhr.onerror = () => {
+      reject(new Error("Network error while uploading file."));
+    };
+
+    xhr.onabort = () => {
+      reject(new Error("File upload was cancelled."));
+    };
+
+    xhr.onload = () => {
+      const text = xhr.responseText ?? "";
+      if (xhr.status < 200 || xhr.status >= 300) {
+        console.error("API error", `/api/decks/${deckId}/import-pdf`, xhr.status, text);
+        reject(new Error(`${xhr.status} ${xhr.statusText}: ${text}`));
+        return;
+      }
+
+      try {
+        const json = JSON.parse(text) as ImportPdfResponse;
+        resolve({
+          ...json,
+          insertedCards: (json.insertedCards ?? []).map(normalizeCard),
+        });
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error("Failed to parse upload response."));
+      }
+    };
+
+    xhr.send(data);
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    console.error("API error", `/api/decks/${deckId}/import-pdf`, res.status, text);
-    throw new Error(`${res.status} ${res.statusText}: ${text}`);
-  }
-
-  const json = (await res.json()) as ImportPdfResponse;
-  return {
-    ...json,
-    insertedCards: (json.insertedCards ?? []).map(normalizeCard),
-  };
 }
 
 export async function getSavedPublicDecks(): Promise<PublicDeckRow[]> {
