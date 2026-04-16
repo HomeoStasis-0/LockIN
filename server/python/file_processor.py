@@ -49,6 +49,27 @@ MAX_CHARS_PER_CHUNK = 8000
 MAX_CHUNKS = 4
 
 
+def get_extract_char_limit():
+    raw = os.environ.get("EXTRACT_CHAR_LIMIT")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        if value <= 0:
+            return None
+        return value
+    except Exception:
+        return None
+
+
+def trim_to_limit(text, limit):
+    if not text or not limit:
+        return text
+    if len(text) <= limit:
+        return text
+    return text[:limit]
+
+
 def resolve_tesseract_cmd():
     """Find the tesseract binary in common local, virtualenv, and Heroku apt locations."""
     if pytesseract is None:
@@ -114,6 +135,10 @@ def clean_extracted_text(text):
 
 def extract_text_from_pdf_ocr(pdf_path):
     """OCR fallback for scanned/image-only PDFs."""
+    if os.environ.get("DISABLE_OCR") == "1":
+        print("OCR disabled for this extraction run.", file=sys.stderr)
+        return ""
+
     if pdfium is None or pytesseract is None:
         missing = []
         if pdfium is None:
@@ -168,6 +193,7 @@ def extract_text_from_pdf_ocr(pdf_path):
 def extract_text_from_pdf(pdf_path):
     """Extract text from PDF using pdfplumber."""
     print(f"Extracting text from PDF: {pdf_path}...", file=sys.stderr)
+    limit = get_extract_char_limit()
     full_text = ""
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -200,6 +226,9 @@ def extract_text_from_pdf(pdf_path):
 
                 if page_text and page_text.strip():
                     full_text += page_text.strip() + "\n"
+                    if limit and len(full_text) >= limit:
+                        full_text = trim_to_limit(full_text, limit)
+                        break
 
         full_text = full_text.strip()
         print(f"Extracted {len(full_text)} characters from PDF.", file=sys.stderr)
@@ -216,7 +245,7 @@ def extract_text_from_pdf(pdf_path):
             )
             return None
 
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading PDF: {e}", file=sys.stderr)
         return None
@@ -228,6 +257,7 @@ def extract_text_from_pptx(pptx_path):
     if Presentation is None:
         raise RuntimeError("python-pptx not installed. Install with: pip install python-pptx")
     
+    limit = get_extract_char_limit()
     full_text = ""
     try:
         prs = Presentation(pptx_path)
@@ -237,9 +267,12 @@ def extract_text_from_pptx(pptx_path):
                 if hasattr(shape, "text"):
                     if shape.text.strip():
                         full_text += shape.text + "\n"
+            if limit and len(full_text) >= limit:
+                full_text = trim_to_limit(full_text, limit)
+                break
         
         print(f"Extracted {len(full_text)} characters from PPTX.", file=sys.stderr)
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading PPTX: {e}", file=sys.stderr)
         return None
@@ -251,15 +284,19 @@ def extract_text_from_docx(docx_path):
     if Document is None:
         raise RuntimeError("python-docx not installed. Install with: pip install python-docx")
     
+    limit = get_extract_char_limit()
     full_text = ""
     try:
         doc = Document(docx_path)
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
                 full_text += paragraph.text + "\n"
+            if limit and len(full_text) >= limit:
+                full_text = trim_to_limit(full_text, limit)
+                break
         
         print(f"Extracted {len(full_text)} characters from DOCX.", file=sys.stderr)
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading DOCX: {e}", file=sys.stderr)
         return None
@@ -268,11 +305,15 @@ def extract_text_from_docx(docx_path):
 def extract_text_from_plain_text(file_path):
     """Extract text from plain text files (TXT, MD, MARKDOWN, CSV, JSON, RTF)."""
     print(f"Reading text file: {file_path}...", file=sys.stderr)
+    limit = get_extract_char_limit()
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            full_text = f.read()
+            if limit:
+                full_text = f.read(limit)
+            else:
+                full_text = f.read()
         print(f"Extracted {len(full_text)} characters.", file=sys.stderr)
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading text file: {e}", file=sys.stderr)
         return None

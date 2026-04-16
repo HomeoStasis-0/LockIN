@@ -34,6 +34,10 @@ def main() -> int:
         print("max_chars must be at least 1000", file=sys.stderr)
         return 1
 
+    # Keep oversized-file compression extraction bounded to avoid OOM on small dynos.
+    os.environ["EXTRACT_CHAR_LIMIT"] = str(max_chars)
+    os.environ["DISABLE_OCR"] = "1"
+
     text = extract_text_from_file(input_file)
     if not text or not str(text).strip():
         print("NO_EXTRACTABLE_TEXT: unable to extract text for compression", file=sys.stderr)
