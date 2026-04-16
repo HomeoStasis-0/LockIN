@@ -21,9 +21,19 @@ const app = express();
 const uploadDir = path.join(__dirname, "..", "uploads");
 const extractDir = path.join(__dirname, "..", "uploads", "extracted");
 const COMPRESS_FOR_IMPORT_PATH = path.join(__dirname, "python", "compress_for_import.py");
-const MAX_UPLOAD_FILE_BYTES = 1024 * 1024 * 1024; // 1GB hard upload cap
-const MAX_IMPORT_PROCESSING_BYTES = 512 * 1024 * 1024; // 512MB preferred processing size
-const MAX_COMPRESSED_TEXT_CHARS = Number(process.env.MAX_COMPRESSED_TEXT_CHARS || 2_000_000);
+
+function parseEnvMb(name, fallbackMb) {
+  const raw = process.env[name];
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMb * 1024 * 1024;
+  }
+  return Math.floor(parsed * 1024 * 1024);
+}
+
+const MAX_UPLOAD_FILE_BYTES = parseEnvMb("MAX_UPLOAD_FILE_MB", 1024); // upload hard cap
+const MAX_IMPORT_PROCESSING_BYTES = parseEnvMb("MAX_IMPORT_PROCESSING_MB", 25); // compress when larger than this
+const MAX_COMPRESSED_TEXT_CHARS = Number(process.env.MAX_COMPRESSED_TEXT_CHARS || 300_000);
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
