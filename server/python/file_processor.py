@@ -426,6 +426,111 @@ def ensure_math_in_study_set(study_set):
     return study_set
 
 
+def normalize_generated_payload(payload):
+    """Normalize model output into {'flashcards': [...], 'quiz': [...]} shape."""
+    flashcards = []
+    quiz = []
+
+    def add_flashcard(front, back):
+        front_text = str(front or "").strip()
+        back_text = str(back or "").strip()
+        if front_text and back_text:
+            flashcards.append({"front": front_text, "back": back_text})
+
+    def add_quiz(question, options, correct_answer):
+        question_text = str(question or "").strip()
+        correct_text = str(correct_answer or "").strip()
+        if not isinstance(options, list):
+            return
+        options_text = [str(opt).strip() for opt in options if str(opt).strip()]
+        if question_text and correct_text and len(options_text) >= 2:
+            quiz.append(
+                {
+                    "question": question_text,
+                    "options": options_text,
+                    "correct_answer": correct_text,
+                }
+            )
+
+    def walk(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("flashcards"), list):
+                for card in node.get("flashcards", []):
+                    if isinstance(card, dict):
+                        add_flashcard(card.get("front"), card.get("back"))
+
+            if isinstance(node.get("quiz"), list):
+                for item in node.get("quiz", []):
+                    if isinstance(item, dict):
+                        add_quiz(item.get("question"), item.get("options"), item.get("correct_answer"))
+
+            # Support stray top-level card/quiz items mixed into arrays.
+            if "front" in node or "back" in node:
+                add_flashcard(node.get("front"), node.get("back"))
+
+            if "question" in node and "options" in node and "correct_answer" in node:
+                add_quiz(node.get("question"), node.get("options"), node.get("correct_answer"))
+
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    return {"flashcards": flashcards, "quiz": quiz}
+
+
+def _extract_failed_generation_payload(exc):
+    """Best-effort extraction of Groq failed_generation JSON from exceptions."""
+    failed_generation = None
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        failed_generation = (
+            body.get("error", {}).get("failed_generation")
+            if isinstance(body.get("error"), dict)
+            else None
+        )
+
+    if not failed_generation:
+        msg = str(exc)
+        match = re.search(r"failed_generation':\s*'([\\s\\S]*?)'\s*}\s*$", msg)
+        if not match:
+            return None
+        failed_generation = match.group(1)
+
+    if not isinstance(failed_generation, str) or not failed_generation.strip():
+        return None
+
+    raw = failed_generation.strip()
+    candidates = [raw]
+    try:
+        candidates.append(bytes(raw, "utf-8").decode("unicode_escape"))
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+
+    return None
+
+
+def _salvage_from_exception(exc):
+    payload = _extract_failed_generation_payload(exc)
+    if payload is None:
+        return None
+
+    normalized = normalize_generated_payload(payload)
+    normalized = dedupe_study_set(normalized)
+    if len(normalized.get("flashcards", [])) == 0 and len(normalized.get("quiz", [])) == 0:
+        return None
+
+    print("Recovered study material from failed_generation payload.", file=sys.stderr)
+    return ensure_math_in_study_set(normalized)
+
+
 # ==================== GROQ GENERATION ====================
 
 def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
@@ -540,8 +645,14 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
                     },
                 )
                 parsed = json.loads(chat_completion.choices[0].message.content)
-                return ensure_math_in_study_set(parsed)
+                normalized = normalize_generated_payload(parsed)
+                if len(normalized.get("flashcards", [])) == 0 and len(normalized.get("quiz", [])) == 0:
+                    raise RuntimeError("NO_STUDY_MATERIALS: Empty normalized payload")
+                return ensure_math_in_study_set(normalized)
             except Exception as inner:
+                recovered = _salvage_from_exception(inner)
+                if recovered:
+                    return recovered
                 last_err = inner
 
         # Second attempt: flashcards-only schema, then normalize quiz to an empty array.
@@ -574,9 +685,14 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
                     },
                 )
                 parsed = json.loads(chat_completion.choices[0].message.content)
-                parsed["quiz"] = []
-                return ensure_math_in_study_set(parsed)
+                normalized = normalize_generated_payload(parsed)
+                if len(normalized.get("flashcards", [])) == 0:
+                    raise RuntimeError("NO_STUDY_MATERIALS: Empty normalized flashcards payload")
+                return ensure_math_in_study_set(normalized)
             except Exception as inner:
+                recovered = _salvage_from_exception(inner)
+                if recovered:
+                    return recovered
                 last_err = inner
 
         raise last_err if last_err else RuntimeError("Unknown Groq generation error")

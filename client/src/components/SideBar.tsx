@@ -21,8 +21,8 @@ export function NavItem({
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `flex items-center rounded-xl py-2 transition
-        ${expanded ? "gap-3 px-3 justify-start" : "justify-center px-2"}
+        `flex items-center justify-center rounded-xl px-3 py-2 transition sm:px-2
+        ${expanded ? "sm:gap-3 sm:px-3 sm:justify-start" : "sm:justify-center sm:px-2"}
         ${
           isActive
             ? "bg-blue-100 text-blue-700 font-semibold"
@@ -32,8 +32,8 @@ export function NavItem({
     >
       <span className="flex items-center justify-center">{icon}</span>
       <span
-        className={`overflow-hidden whitespace-nowrap transition-all duration-300
-          ${expanded ? "w-24 opacity-100" : "w-0 opacity-0"}`}
+        className={`overflow-hidden whitespace-nowrap transition-all duration-300 w-0 opacity-0
+          ${expanded ? "sm:w-24 sm:opacity-100" : "sm:w-0 sm:opacity-0"}`}
       >
         {text}
       </span>
@@ -46,27 +46,27 @@ export default function SideBar() {
 
   return (
     <aside
-      className={`h-screen bg-white p-4 shadow transition-all duration-300
-        ${expanded ? "w-64 rounded-r-3xl" : "w-20 rounded-r-3xl"}`}
+      className={`sticky top-0 z-20 w-full border-b bg-white p-3 shadow transition-all duration-300 sm:h-screen sm:self-start sm:border-b-0 sm:border-r sm:p-4
+        ${expanded ? "sm:w-64" : "sm:w-20"}`}
     >
-      <div className="flex h-full flex-col">
-        <div className={`mb-6 flex items-center ${expanded ? "justify-between" : "justify-center"}`}>
+      <div className="flex h-full flex-row items-center justify-between gap-2 sm:flex-col sm:items-stretch sm:gap-0">
+        <div className={`mb-0 flex items-center justify-center sm:mb-6 ${expanded ? "sm:justify-between" : "sm:justify-center"}`}>
           <div
-            className={`overflow-hidden transition-all duration-300
-              ${expanded ? "w-24 opacity-100" : "w-0 opacity-0"}`}
+            className={`w-10 overflow-hidden opacity-100 transition-all duration-300
+              ${expanded ? "sm:w-24 sm:opacity-100" : "sm:w-0 sm:opacity-0"}`}
           >
             <img src={logo} alt="Logo" />
           </div>
 
           <button
             onClick={() => setExpanded((prev) => !prev)}
-            className="rounded-lg p-2 hover:bg-gray-100"
+            className="hidden rounded-lg p-2 hover:bg-gray-100 sm:inline-flex"
           >
             {expanded ? <LockOpen size={18} /> : <Lock size={18} />}
           </button>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-1 flex-row items-center gap-2 sm:flex-col sm:items-stretch">
           <NavItem
             icon={<LayoutDashboard size={18} />}
             text="Dashboard"
@@ -81,15 +81,15 @@ export default function SideBar() {
           />
         </div>
 
-        <div className="mt-auto border-t pt-4">
+        <div className="mt-0 border-t-0 pt-0 sm:mt-auto sm:border-t sm:pt-4">
           <button
-            className={`flex items-center rounded-xl px-3 py-2 text-gray-700 hover:bg-gray-100 transition w-full
-              ${expanded ? "gap-3 justify-start" : "justify-center px-2"}`}
+            className={`flex items-center justify-center rounded-xl px-3 py-2 text-gray-700 transition hover:bg-gray-100 sm:w-full sm:px-2
+              ${expanded ? "sm:gap-3 sm:justify-start sm:px-3" : "sm:justify-center sm:px-2"}`}
           >
             <CircleUserRound size={18} />
             <span
-              className={`overflow-hidden whitespace-nowrap transition-all duration-300
-                ${expanded ? "w-20 opacity-100" : "w-0 opacity-0"}`}
+              className={`overflow-hidden whitespace-nowrap transition-all duration-300 w-0 opacity-0
+                ${expanded ? "sm:w-20 sm:opacity-100" : "sm:w-0 sm:opacity-0"}`}
             >
               Account
             </span>
