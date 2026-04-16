@@ -14,30 +14,49 @@ const path = require('path');
 const FILE_PROCESSOR_PATH = path.join(__dirname, "..", "python", "file_processor.py");
 const PDF_TO_QUIZ_PATH = path.join(__dirname, "..", "python", "pdf_to_quiz.py");
 
+function isWindowsStylePath(candidate) {
+  return typeof candidate === 'string' && (/^[A-Za-z]:[\\/]/.test(candidate) || candidate.includes('\\'));
+}
+
 function resolvePythonBin() {
-  const projectVenvPython = path.join(__dirname, '..', '..', 'venv', 'bin', 'python');
-  const activeVenvPython = process.env.VIRTUAL_ENV
+  const projectVenvPythonPosix = path.join(__dirname, '..', '..', 'venv', 'bin', 'python');
+  const projectVenvPythonWin = path.join(__dirname, '..', '..', 'venv', 'Scripts', 'python.exe');
+  const activeVenvPythonPosix = process.env.VIRTUAL_ENV
     ? path.join(process.env.VIRTUAL_ENV, 'bin', 'python')
     : null;
+  const activeVenvPythonWin = process.env.VIRTUAL_ENV
+    ? path.join(process.env.VIRTUAL_ENV, 'Scripts', 'python.exe')
+    : null;
+
+  const preferPosixPython = process.platform !== 'win32';
 
   const candidates = [
     process.env.PYTHON_BIN,
-    activeVenvPython,
-    projectVenvPython,
+    preferPosixPython ? activeVenvPythonPosix : activeVenvPythonWin,
+    preferPosixPython ? projectVenvPythonPosix : projectVenvPythonWin,
     '/app/.heroku/python/bin/python3',
     '/app/.heroku/python/bin/python',
     '/usr/bin/python3',
     '/usr/local/bin/python3',
     '/opt/homebrew/bin/python3',
+    'python',
     'python3',
   ].filter(Boolean);
 
   for (const candidate of candidates) {
-    if (!candidate.startsWith('/')) return candidate;
-    if (fs.existsSync(candidate)) return candidate;
+    if (preferPosixPython && isWindowsStylePath(candidate)) {
+      continue;
+    }
+
+    // Validate absolute paths, but allow command names (python/python3) for PATH lookup.
+    if (path.isAbsolute(candidate)) {
+      if (fs.existsSync(candidate)) return candidate;
+      continue;
+    }
+    return candidate;
   }
 
-  return 'python3';
+  return process.platform === 'win32' ? 'python' : 'python3';
 }
 
 const PYTHON_BIN = resolvePythonBin();
