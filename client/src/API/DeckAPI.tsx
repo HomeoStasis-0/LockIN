@@ -49,12 +49,15 @@ export type ImportPdfResponse = {
 
 export type ImportPdfProgressHandlers = {
   onProgress?: (progress: number) => void;
+  onPhase?: (phase: string) => void;
   onUploadComplete?: () => void;
 };
 
 type ImportJobStatusResponse = {
   jobId: string;
   status: "queued" | "running" | "succeeded" | "failed";
+  progress?: number;
+  phase?: string;
   result?: ImportPdfResponse;
   error?: {
     status?: number;
@@ -74,7 +77,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-async function pollImportJob(jobId: string): Promise<ImportPdfResponse> {
+async function pollImportJob(jobId: string, handlers: ImportPdfProgressHandlers = {}): Promise<ImportPdfResponse> {
   const maxAttempts = 120;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const res = await fetch(`/api/decks/import-jobs/${jobId}`, {
@@ -87,7 +90,16 @@ async function pollImportJob(jobId: string): Promise<ImportPdfResponse> {
     }
 
     const job = (await res.json()) as ImportJobStatusResponse;
+    if (typeof job.progress === "number") {
+      handlers.onProgress?.(Math.max(0, Math.min(100, Math.round(job.progress))));
+    }
+    if (typeof job.phase === "string" && job.phase.trim()) {
+      handlers.onPhase?.(job.phase);
+    }
+
     if (job.status === "succeeded" && job.result) {
+      handlers.onProgress?.(100);
+      handlers.onPhase?.("Completed");
       return normalizeImportResponse(job.result);
     }
 
@@ -178,10 +190,14 @@ export async function importPdfToDeck(
 
     xhr.upload.onprogress = (event) => {
       if (!event.lengthComputable || event.total <= 0) return;
-      handlers.onProgress?.(Math.round((event.loaded / event.total) * 100));
+      const uploadShare = Math.round((event.loaded / event.total) * 10);
+      handlers.onProgress?.(uploadShare);
+      handlers.onPhase?.("Uploading file");
     };
 
     xhr.upload.onload = () => {
+      handlers.onProgress?.(10);
+      handlers.onPhase?.("Upload complete");
       handlers.onUploadComplete?.();
     };
 
@@ -209,7 +225,7 @@ export async function importPdfToDeck(
             return;
           }
 
-          void pollImportJob(queued.jobId)
+          void pollImportJob(queued.jobId, handlers)
             .then(resolve)
             .catch(reject);
           return;

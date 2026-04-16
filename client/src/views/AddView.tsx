@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { styles } from "../styles/DeckStyles";
 import type { ImportPdfProgressHandlers } from "../API/DeckAPI";
 
@@ -42,23 +42,10 @@ export default function AddView(props: {
   const [isUploading, setIsUploading] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingPhase, setProcessingPhase] = useState("Preparing upload");
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    if (!isProcessing) return;
-
-    const timer = window.setInterval(() => {
-      setProcessingProgress((current) => {
-        if (current >= 95) return current;
-        const step = Math.max(1, Math.ceil((95 - current) / 4));
-        return Math.min(95, current + step);
-      });
-    }, 250);
-
-    return () => window.clearInterval(timer);
-  }, [isProcessing]);
 
   async function submit() {
     const f = front.trim();
@@ -93,13 +80,24 @@ export default function AddView(props: {
       setIsUploading(true);
       setIsProcessing(false);
       setProcessingProgress(0);
+      setProcessingPhase("Uploading file");
       const result = await props.onImportPdf(file, {
+        onProgress: (progress) => {
+          setIsProcessing(true);
+          setProcessingProgress((current) => Math.max(current, Math.round(progress)));
+        },
+        onPhase: (phase) => {
+          setIsProcessing(true);
+          setProcessingPhase(phase);
+        },
         onUploadComplete: () => {
           setIsProcessing(true);
-          setProcessingProgress(1);
+          setProcessingProgress((current) => Math.max(current, 10));
+          setProcessingPhase("Processing import");
         },
       });
       setProcessingProgress(100);
+      setProcessingPhase("Completed");
       setIsProcessing(false);
       const skipped = result.skippedDuplicates ?? 0;
       if (result.inserted === 0 && skipped > 0) {
@@ -169,7 +167,7 @@ export default function AddView(props: {
           {isUploading ? (
             <div style={{ marginTop: 12 }}>
               <div style={{ ...styles.muted, marginBottom: 6 }}>
-                {isProcessing ? `Processing... ${processingProgress}%` : "Uploading file..."}
+                {isProcessing ? `${processingPhase}... ${processingProgress}%` : "Uploading file..."}
               </div>
               {isProcessing ? (
                 <div
