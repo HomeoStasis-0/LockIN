@@ -14,6 +14,13 @@ type CreateDeckBody = {
   instructor: string | null;
 };
 
+type UpdateDeckBody = {
+  deck_name: string;
+  subject: string | null;
+  course_number: number | null;
+  instructor: string | null;
+};
+
 type DeleteDeckResponse = {
   ok: true;
   deletedDeckId: number;
@@ -59,6 +66,11 @@ function parseSubject(courseId: string): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
+function formatCourseId(deck: DeckRow): string {
+  if (!deck.subject && deck.course_number == null) return "";
+  return `${deck.subject ?? ""}${deck.course_number ?? ""}`;
+}
+
 export default function Dashboard() {
   const { user, logout, loading } = useAuth();
   const navigate = useNavigate();
@@ -76,6 +88,11 @@ export default function Dashboard() {
   const [adding, setAdding] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newId, setNewId] = useState(""); // e.g. CSCE120
+
+  const [editingDeckId, setEditingDeckId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editId, setEditId] = useState("");
+  const [savingDeckId, setSavingDeckId] = useState<number | null>(null);
 
   const [publishingDeckId, setPublishingDeckId] = useState<number | null>(null);
   const [publishedDeckIds, setPublishedDeckIds] = useState<Record<number, boolean>>({});
@@ -182,6 +199,52 @@ export default function Dashboard() {
       alert(e instanceof Error ? e.message : "Failed to delete deck");
     } finally {
       setDeletingDeckId(null);
+    }
+  }
+
+  function startEditDeck(deck: DeckRow) {
+    setEditingDeckId(deck.id);
+    setEditTitle(deck.deck_name);
+    setEditId(formatCourseId(deck));
+  }
+
+  function cancelEditDeck() {
+    setEditingDeckId(null);
+    setEditTitle("");
+    setEditId("");
+  }
+
+  async function saveDeck(deck: DeckRow) {
+    const nextTitle = editTitle.trim();
+    const nextId = editId.trim();
+
+    if (!nextTitle) {
+      alert("Course title is required");
+      return;
+    }
+
+    const body: UpdateDeckBody = {
+      deck_name: nextTitle,
+      subject: parseSubject(nextId),
+      course_number: parseCourseNumber(nextId),
+      instructor: deck.instructor ?? null,
+    };
+
+    try {
+      setSavingDeckId(deck.id);
+      const updated = normalizeDeck(
+        await api<any>(`/api/decks/${deck.id}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        })
+      );
+
+      setDecks((prev) => prev.map((d) => (d.id === updated.id ? { ...d, ...updated } : d)));
+      cancelEditDeck();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to update deck");
+    } finally {
+      setSavingDeckId(null);
     }
   }
 
@@ -309,27 +372,73 @@ export default function Dashboard() {
                 key={d.id}
                 className="rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm transition hover:shadow-md"
               >
-                <div className="mb-3">
-                  <h3 className="text-lg font-semibold text-slate-800">{d.deck_name}</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {d.subject ?? "—"}
-                    {d.course_number != null ? ` · ${d.course_number}` : ""}
-                  </p>
-                </div>
+                {editingDeckId === d.id ? (
+                  <div className="mb-3 space-y-2">
+                    <input
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      placeholder="Course Title"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-indigo-400"
+                    />
+                    <input
+                      value={editId}
+                      onChange={(e) => setEditId(e.target.value)}
+                      placeholder="Course ID (e.g. CSCE120)"
+                      className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-indigo-400"
+                    />
+                  </div>
+                ) : (
+                  <div className="mb-3">
+                    <h3 className="text-lg font-semibold text-slate-800">{d.deck_name}</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {d.subject ?? "—"}
+                      {d.course_number != null ? ` · ${d.course_number}` : ""}
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex flex-wrap gap-2">
-                  <Link
-                    to={`/courses/${d.id}`}
-                    className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
-                  >
-                    Open
-                  </Link>
+                  {editingDeckId === d.id ? (
+                    <>
+                      <button
+                        onClick={() => saveDeck(d)}
+                        disabled={savingDeckId === d.id}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {savingDeckId === d.id ? "Saving..." : "Save"}
+                      </button>
+
+                      <button
+                        onClick={cancelEditDeck}
+                        disabled={savingDeckId === d.id}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Link
+                        to={`/courses/${d.id}`}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-700"
+                      >
+                        Open
+                      </Link>
+
+                      <button
+                        onClick={() => startEditDeck(d)}
+                        className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                      >
+                        Edit
+                      </button>
+                    </>
+                  )}
 
                   <button
                     onClick={() =>
                       publishedDeckIds[d.id] ? unpublishCourse(d.id) : publishCourse(d.id)
                     }
-                    disabled={publishingDeckId === d.id}
+                    disabled={publishingDeckId === d.id || editingDeckId === d.id}
                     className={`rounded-xl border px-4 py-2 text-sm font-medium transition disabled:opacity-60 ${
                       publishedDeckIds[d.id]
                         ? "border-orange-300 bg-white text-orange-600 hover:bg-orange-50"
@@ -347,7 +456,7 @@ export default function Dashboard() {
 
                   <button
                     onClick={() => deleteCourse(d.id, d.deck_name)}
-                    disabled={deletingDeckId === d.id}
+                    disabled={deletingDeckId === d.id || editingDeckId === d.id}
                     className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
                   >
                     {deletingDeckId === d.id ? "Deleting..." : "Delete"}

@@ -49,6 +49,27 @@ MAX_CHARS_PER_CHUNK = 8000
 MAX_CHUNKS = 4
 
 
+def get_extract_char_limit():
+    raw = os.environ.get("EXTRACT_CHAR_LIMIT")
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+        if value <= 0:
+            return None
+        return value
+    except Exception:
+        return None
+
+
+def trim_to_limit(text, limit):
+    if not text or not limit:
+        return text
+    if len(text) <= limit:
+        return text
+    return text[:limit]
+
+
 def resolve_tesseract_cmd():
     """Find the tesseract binary in common local, virtualenv, and Heroku apt locations."""
     if pytesseract is None:
@@ -114,6 +135,10 @@ def clean_extracted_text(text):
 
 def extract_text_from_pdf_ocr(pdf_path):
     """OCR fallback for scanned/image-only PDFs."""
+    if os.environ.get("DISABLE_OCR") == "1":
+        print("OCR disabled for this extraction run.", file=sys.stderr)
+        return ""
+
     if pdfium is None or pytesseract is None:
         missing = []
         if pdfium is None:
@@ -168,6 +193,7 @@ def extract_text_from_pdf_ocr(pdf_path):
 def extract_text_from_pdf(pdf_path):
     """Extract text from PDF using pdfplumber."""
     print(f"Extracting text from PDF: {pdf_path}...", file=sys.stderr)
+    limit = get_extract_char_limit()
     full_text = ""
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -200,6 +226,9 @@ def extract_text_from_pdf(pdf_path):
 
                 if page_text and page_text.strip():
                     full_text += page_text.strip() + "\n"
+                    if limit and len(full_text) >= limit:
+                        full_text = trim_to_limit(full_text, limit)
+                        break
 
         full_text = full_text.strip()
         print(f"Extracted {len(full_text)} characters from PDF.", file=sys.stderr)
@@ -216,7 +245,7 @@ def extract_text_from_pdf(pdf_path):
             )
             return None
 
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading PDF: {e}", file=sys.stderr)
         return None
@@ -228,6 +257,7 @@ def extract_text_from_pptx(pptx_path):
     if Presentation is None:
         raise RuntimeError("python-pptx not installed. Install with: pip install python-pptx")
     
+    limit = get_extract_char_limit()
     full_text = ""
     try:
         prs = Presentation(pptx_path)
@@ -237,9 +267,12 @@ def extract_text_from_pptx(pptx_path):
                 if hasattr(shape, "text"):
                     if shape.text.strip():
                         full_text += shape.text + "\n"
+            if limit and len(full_text) >= limit:
+                full_text = trim_to_limit(full_text, limit)
+                break
         
         print(f"Extracted {len(full_text)} characters from PPTX.", file=sys.stderr)
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading PPTX: {e}", file=sys.stderr)
         return None
@@ -251,15 +284,19 @@ def extract_text_from_docx(docx_path):
     if Document is None:
         raise RuntimeError("python-docx not installed. Install with: pip install python-docx")
     
+    limit = get_extract_char_limit()
     full_text = ""
     try:
         doc = Document(docx_path)
         for paragraph in doc.paragraphs:
             if paragraph.text.strip():
                 full_text += paragraph.text + "\n"
+            if limit and len(full_text) >= limit:
+                full_text = trim_to_limit(full_text, limit)
+                break
         
         print(f"Extracted {len(full_text)} characters from DOCX.", file=sys.stderr)
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading DOCX: {e}", file=sys.stderr)
         return None
@@ -268,11 +305,15 @@ def extract_text_from_docx(docx_path):
 def extract_text_from_plain_text(file_path):
     """Extract text from plain text files (TXT, MD, MARKDOWN, CSV, JSON, RTF)."""
     print(f"Reading text file: {file_path}...", file=sys.stderr)
+    limit = get_extract_char_limit()
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            full_text = f.read()
+            if limit:
+                full_text = f.read(limit)
+            else:
+                full_text = f.read()
         print(f"Extracted {len(full_text)} characters.", file=sys.stderr)
-        return full_text
+        return trim_to_limit(full_text, limit)
     except Exception as e:
         print(f"Error reading text file: {e}", file=sys.stderr)
         return None
@@ -426,6 +467,111 @@ def ensure_math_in_study_set(study_set):
     return study_set
 
 
+def normalize_generated_payload(payload):
+    """Normalize model output into {'flashcards': [...], 'quiz': [...]} shape."""
+    flashcards = []
+    quiz = []
+
+    def add_flashcard(front, back):
+        front_text = str(front or "").strip()
+        back_text = str(back or "").strip()
+        if front_text and back_text:
+            flashcards.append({"front": front_text, "back": back_text})
+
+    def add_quiz(question, options, correct_answer):
+        question_text = str(question or "").strip()
+        correct_text = str(correct_answer or "").strip()
+        if not isinstance(options, list):
+            return
+        options_text = [str(opt).strip() for opt in options if str(opt).strip()]
+        if question_text and correct_text and len(options_text) >= 2:
+            quiz.append(
+                {
+                    "question": question_text,
+                    "options": options_text,
+                    "correct_answer": correct_text,
+                }
+            )
+
+    def walk(node):
+        if isinstance(node, dict):
+            if isinstance(node.get("flashcards"), list):
+                for card in node.get("flashcards", []):
+                    if isinstance(card, dict):
+                        add_flashcard(card.get("front"), card.get("back"))
+
+            if isinstance(node.get("quiz"), list):
+                for item in node.get("quiz", []):
+                    if isinstance(item, dict):
+                        add_quiz(item.get("question"), item.get("options"), item.get("correct_answer"))
+
+            # Support stray top-level card/quiz items mixed into arrays.
+            if "front" in node or "back" in node:
+                add_flashcard(node.get("front"), node.get("back"))
+
+            if "question" in node and "options" in node and "correct_answer" in node:
+                add_quiz(node.get("question"), node.get("options"), node.get("correct_answer"))
+
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(payload)
+    return {"flashcards": flashcards, "quiz": quiz}
+
+
+def _extract_failed_generation_payload(exc):
+    """Best-effort extraction of Groq failed_generation JSON from exceptions."""
+    failed_generation = None
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        failed_generation = (
+            body.get("error", {}).get("failed_generation")
+            if isinstance(body.get("error"), dict)
+            else None
+        )
+
+    if not failed_generation:
+        msg = str(exc)
+        match = re.search(r"failed_generation':\s*'([\\s\\S]*?)'\s*}\s*$", msg)
+        if not match:
+            return None
+        failed_generation = match.group(1)
+
+    if not isinstance(failed_generation, str) or not failed_generation.strip():
+        return None
+
+    raw = failed_generation.strip()
+    candidates = [raw]
+    try:
+        candidates.append(bytes(raw, "utf-8").decode("unicode_escape"))
+    except Exception:
+        pass
+
+    for candidate in candidates:
+        try:
+            return json.loads(candidate)
+        except Exception:
+            continue
+
+    return None
+
+
+def _salvage_from_exception(exc):
+    payload = _extract_failed_generation_payload(exc)
+    if payload is None:
+        return None
+
+    normalized = normalize_generated_payload(payload)
+    normalized = dedupe_study_set(normalized)
+    if len(normalized.get("flashcards", [])) == 0 and len(normalized.get("quiz", [])) == 0:
+        return None
+
+    print("Recovered study material from failed_generation payload.", file=sys.stderr)
+    return ensure_math_in_study_set(normalized)
+
+
 # ==================== GROQ GENERATION ====================
 
 def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
@@ -540,8 +686,14 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
                     },
                 )
                 parsed = json.loads(chat_completion.choices[0].message.content)
-                return ensure_math_in_study_set(parsed)
+                normalized = normalize_generated_payload(parsed)
+                if len(normalized.get("flashcards", [])) == 0 and len(normalized.get("quiz", [])) == 0:
+                    raise RuntimeError("NO_STUDY_MATERIALS: Empty normalized payload")
+                return ensure_math_in_study_set(normalized)
             except Exception as inner:
+                recovered = _salvage_from_exception(inner)
+                if recovered:
+                    return recovered
                 last_err = inner
 
         # Second attempt: flashcards-only schema, then normalize quiz to an empty array.
@@ -574,9 +726,14 @@ def _generate_study_material_for_chunk(context_text, chunk_index, total_chunks):
                     },
                 )
                 parsed = json.loads(chat_completion.choices[0].message.content)
-                parsed["quiz"] = []
-                return ensure_math_in_study_set(parsed)
+                normalized = normalize_generated_payload(parsed)
+                if len(normalized.get("flashcards", [])) == 0:
+                    raise RuntimeError("NO_STUDY_MATERIALS: Empty normalized flashcards payload")
+                return ensure_math_in_study_set(normalized)
             except Exception as inner:
+                recovered = _salvage_from_exception(inner)
+                if recovered:
+                    return recovered
                 last_err = inner
 
         raise last_err if last_err else RuntimeError("Unknown Groq generation error")

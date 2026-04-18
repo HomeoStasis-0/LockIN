@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const cookieParser = require("cookie-parser");
 const multer = require("multer");
 const extractZip = require("extract-zip");
+const { spawn } = require("child_process");
 const { sm2Update, updateCardDb } = require("./utils/spaced_repetition");
 const { generateStudyMaterials, generateStudyMaterialsFromPdf } = require("./services/aiService");
 const createCommunityRouter = require("./routes/community");
@@ -19,6 +20,20 @@ const app = express();
 
 const uploadDir = path.join(__dirname, "..", "uploads");
 const extractDir = path.join(__dirname, "..", "uploads", "extracted");
+const COMPRESS_FOR_IMPORT_PATH = path.join(__dirname, "python", "compress_for_import.py");
+
+function parseEnvMb(name, fallbackMb) {
+  const raw = process.env[name];
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMb * 1024 * 1024;
+  }
+  return Math.floor(parsed * 1024 * 1024);
+}
+
+const MAX_UPLOAD_FILE_BYTES = parseEnvMb("MAX_UPLOAD_FILE_MB", 1024); // upload hard cap
+const MAX_IMPORT_PROCESSING_BYTES = parseEnvMb("MAX_IMPORT_PROCESSING_MB", 25); // compress when larger than this
+const MAX_COMPRESSED_TEXT_CHARS = Number(process.env.MAX_COMPRESSED_TEXT_CHARS || 300_000);
 
 const transporter = nodemailer.createTransport({
   service: "gmail",
@@ -62,7 +77,7 @@ const storage = multer.diskStorage({
 
 const uploadFile = multer({
   storage,
-  limits: { fileSize: 1024 * 1024 * 1024 }, // 1GB
+  limits: { fileSize: MAX_UPLOAD_FILE_BYTES },
   fileFilter: (req, file, cb) => {
     const name = (file.originalname || "").toLowerCase();
     const ext = path.extname(name);
@@ -77,6 +92,95 @@ const uploadFile = multer({
     cb(new Error(`Unsupported file type: ${typeLabel}. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}`));
   },
 });
+
+function resolvePythonBin() {
+  const projectVenvPython = path.join(__dirname, "..", "venv", "bin", "python");
+  const activeVenvPython = process.env.VIRTUAL_ENV
+    ? path.join(process.env.VIRTUAL_ENV, "bin", "python")
+    : null;
+
+  const candidates = [
+    process.env.PYTHON_BIN,
+    activeVenvPython,
+    projectVenvPython,
+    "/app/.heroku/python/bin/python3",
+    "/app/.heroku/python/bin/python",
+    "/usr/bin/python3",
+    "/usr/local/bin/python3",
+    "python3",
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (!candidate.startsWith("/")) return candidate;
+    try {
+      require("fs").accessSync(candidate);
+      return candidate;
+    } catch (_) {}
+  }
+
+  return "python3";
+}
+
+async function compressOversizedFileForImport(filePath) {
+  const stat = await fs.stat(filePath);
+  if (!stat.isFile() || stat.size <= MAX_IMPORT_PROCESSING_BYTES) {
+    return { path: filePath, compressed: false, cleanup: false, originalSize: stat.size };
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+    throw new Error(`Unsupported file type for compression: ${ext || "unknown"}`);
+  }
+
+  const outputPath = path.join(
+    path.dirname(filePath),
+    `${path.basename(filePath, ext)}-compressed-${Date.now()}.txt`
+  );
+
+  const pythonBin = resolvePythonBin();
+  const stderrChunks = [];
+
+  await new Promise((resolve, reject) => {
+    const py = spawn(
+      pythonBin,
+      [COMPRESS_FOR_IMPORT_PATH, filePath, outputPath, String(MAX_COMPRESSED_TEXT_CHARS)],
+      {
+        cwd: path.dirname(COMPRESS_FOR_IMPORT_PATH),
+        env: { ...process.env },
+        timeout: 300000,
+      }
+    );
+
+    py.stderr.on("data", (chunk) => {
+      stderrChunks.push(chunk.toString());
+    });
+
+    py.on("error", (err) => {
+      reject(new Error(`Failed to run compression helper: ${err.message}`));
+    });
+
+    py.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`Compression helper failed (${code}): ${stderrChunks.join("").trim() || "unknown error"}`));
+        return;
+      }
+      resolve();
+    });
+  });
+
+  const compressedStat = await fs.stat(outputPath);
+  if (!compressedStat.isFile() || compressedStat.size === 0) {
+    throw new Error("Compression helper did not produce a valid output file");
+  }
+
+  return {
+    path: outputPath,
+    compressed: true,
+    cleanup: true,
+    originalSize: stat.size,
+    compressedSize: compressedStat.size,
+  };
+}
 
 function normalizeFlashcards(studySet) {
   const rawCards = Array.isArray(studySet?.flashcards) ? studySet.flashcards : [];
@@ -750,6 +854,14 @@ async function processMultipleFiles(filePaths) {
   };
 }
 
+function clampProgress(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  if (num <= 0) return 0;
+  if (num >= 100) return 100;
+  return Math.round(num);
+}
+
 function hasOcrRuntimeIssue(errors = []) {
   return Array.isArray(errors)
     && errors.some((m) => {
@@ -921,6 +1033,67 @@ app.post("/api/cards", async (req, res) => {
   }
 });
 
+const importJobs = new Map();
+const IMPORT_JOB_TTL_MS = 1000 * 60 * 60; // 1 hour
+
+function pruneImportJobs() {
+  const now = Date.now();
+  for (const [jobId, job] of importJobs.entries()) {
+    const doneAt = job.completedAt ? Date.parse(job.completedAt) : 0;
+    if (doneAt > 0 && now - doneAt > IMPORT_JOB_TTL_MS) {
+      importJobs.delete(jobId);
+    }
+  }
+}
+
+function createImportJob({ userId, deckId, fileName }) {
+  pruneImportJobs();
+  const id = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : crypto.randomBytes(16).toString("hex");
+  const createdAt = new Date().toISOString();
+  const job = {
+    id,
+    userId,
+    deckId,
+    fileName,
+    status: "queued",
+    progress: 0,
+    phase: "Queued",
+    createdAt,
+    updatedAt: createdAt,
+    completedAt: null,
+    result: null,
+    error: null,
+  };
+  importJobs.set(id, job);
+  return job;
+}
+
+function setImportJobState(jobId, patch) {
+  const job = importJobs.get(jobId);
+  if (!job) return;
+
+  const nextPatch = { ...patch };
+  if (Object.prototype.hasOwnProperty.call(nextPatch, "progress")) {
+    nextPatch.progress = clampProgress(nextPatch.progress);
+  }
+
+  const updated = {
+    ...job,
+    ...nextPatch,
+    updatedAt: new Date().toISOString(),
+  };
+  importJobs.set(jobId, updated);
+}
+
+function importFailure(status, body) {
+  const error = new Error(String(body?.error || body?.message || "Import failed"));
+  error.importStatus = status;
+  error.importBody = body;
+  return error;
+}
+
 app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), async (req, res) => {
   const deckId = Number(req.params.id);
   const file = req.file;
@@ -933,152 +1106,277 @@ app.post("/api/decks/:id/import-pdf", authenticate, uploadFile.single("pdf"), as
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  let filesToProcess = [file.path];
-  let tempDirs = [];
+  const userId = req.user.user_id;
+  const wantsAsync = String(req.query.async || "") === "1"
+    || String(req.get("x-import-async") || "") === "1";
 
-  try {
-    const deckQ = await pool.query(
-      `SELECT id
-       FROM deck
-       WHERE id = $1 AND user_id = $2`,
-      [deckId, req.user.user_id]
-    );
-    if (deckQ.rowCount === 0) {
-      return res.status(404).json({ error: "Deck not found" });
-    }
+  const executeImport = async (onProgress = () => {}) => {
+    let filesToProcess = [file.path];
+    let tempDirs = [];
+    let tempFiles = [];
 
-    // If ZIP file, extract and get list of supported files
-    if (file.originalname.toLowerCase().endsWith(".zip")) {
-      console.log("Processing ZIP file:", file.originalname);
-      const extractedFiles = await extractZipFile(file.path);
-      if (extractedFiles.length === 0) {
-        return res.status(422).json({
-          error: "No supported files found in ZIP archive",
-          supportedFormats: SUPPORTED_EXTENSIONS.join(", "),
-        });
+    try {
+      onProgress(5, "Validating deck");
+      const deckQ = await pool.query(
+        `SELECT id
+         FROM deck
+         WHERE id = $1 AND user_id = $2`,
+        [deckId, userId]
+      );
+      if (deckQ.rowCount === 0) {
+        throw importFailure(404, { error: "Deck not found" });
       }
-      filesToProcess = extractedFiles;
-      tempDirs.push(path.dirname(extractedFiles[0]));
-    }
+      onProgress(10, "Preparing files");
 
-    // Process all files
-    const studySet = await processMultipleFiles(filesToProcess);
-    const flashcards = normalizeFlashcards(studySet);
-    
-    console.log("File import result", {
-      deckId,
-      filesProcessed: filesToProcess.length,
-      rawFlashcards: Array.isArray(studySet?.flashcards) ? studySet.flashcards.length : 0,
-      rawQuiz: Array.isArray(studySet?.quiz) ? studySet.quiz.length : 0,
-      normalizedFlashcards: flashcards.length,
-    });
+      if (file.originalname.toLowerCase().endsWith(".zip")) {
+        console.log("Processing ZIP file:", file.originalname);
+        onProgress(15, "Extracting ZIP archive");
+        const extractedFiles = await extractZipFile(file.path);
+        if (extractedFiles.length === 0) {
+          throw importFailure(422, {
+            error: "No supported files found in ZIP archive",
+            supportedFormats: SUPPORTED_EXTENSIONS.join(", "),
+          });
+        }
+        filesToProcess = extractedFiles;
+        tempDirs.push(path.dirname(extractedFiles[0]));
+      }
 
-    if (flashcards.length === 0) {
-      const noTextError = Array.isArray(studySet?.errors)
-        && studySet.errors.some((m) => String(m).includes("NO_EXTRACTABLE_TEXT"));
-      const ocrRuntimeIssue = hasOcrRuntimeIssue(studySet?.errors);
+      const preparedFiles = [];
+      const fileCount = Math.max(1, filesToProcess.length);
+      for (let index = 0; index < filesToProcess.length; index += 1) {
+        const currentFilePath = filesToProcess[index];
+        const prepProgress = 20 + Math.round(((index + 1) / fileCount) * 25);
+        onProgress(prepProgress, `Preparing file ${index + 1}/${fileCount}`);
+        const prepared = await compressOversizedFileForImport(currentFilePath);
+        preparedFiles.push(prepared.path);
+        if (prepared.cleanup) {
+          tempFiles.push(prepared.path);
+        }
+        if (prepared.compressed) {
+          console.log("Compressed oversized file for import", {
+            source: currentFilePath,
+            preparedPath: prepared.path,
+            originalBytes: prepared.originalSize,
+            compressedBytes: prepared.compressedSize,
+          });
+        }
+      }
 
-      if (noTextError) {
-        return res.status(422).json({
-          error: "No extractable text found in uploaded file",
-          message: ocrRuntimeIssue
-            ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
-            : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
-          processingErrors: studySet.errors,
+      onProgress(50, "Generating study materials");
+      const studySet = await processMultipleFiles(preparedFiles);
+      const flashcards = normalizeFlashcards(studySet);
+
+      console.log("File import result", {
+        deckId,
+        filesProcessed: preparedFiles.length,
+        rawFlashcards: Array.isArray(studySet?.flashcards) ? studySet.flashcards.length : 0,
+        rawQuiz: Array.isArray(studySet?.quiz) ? studySet.quiz.length : 0,
+        normalizedFlashcards: flashcards.length,
+      });
+
+      if (flashcards.length === 0) {
+        const noTextError = Array.isArray(studySet?.errors)
+          && studySet.errors.some((m) => String(m).includes("NO_EXTRACTABLE_TEXT"));
+        const ocrRuntimeIssue = hasOcrRuntimeIssue(studySet?.errors);
+
+        if (noTextError) {
+          throw importFailure(422, {
+            error: "No extractable text found in uploaded file",
+            message: ocrRuntimeIssue
+              ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
+              : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+            processingErrors: studySet.errors,
+            quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
+          });
+        }
+
+        throw importFailure(422, {
+          error: "No flashcards generated from uploaded files",
+          processingErrors: Array.isArray(studySet?.errors) ? studySet.errors : [],
           quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
         });
       }
 
-      return res.status(422).json({
-        error: "No flashcards generated from uploaded files",
-        processingErrors: Array.isArray(studySet?.errors) ? studySet.errors : [],
-        quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
-      });
-    }
-
-    const existingQ = await pool.query(
-      `SELECT card_front, card_back
-       FROM card
-       WHERE deck_id = $1`,
-      [deckId]
-    );
-    const existingSignatures = existingQ.rows.map((r) =>
-      buildCardSignature(r.card_front, r.card_back)
-    );
-
-    const insertedCards = [];
-    let skippedDuplicates = 0;
-    for (const card of flashcards) {
-      const front = String(card.front ?? "").trim();
-      const back = String(card.back ?? "").trim();
-      if (!front || !back) {
-        continue;
-      }
-
-      const signature = buildCardSignature(front, back);
-      if (isLikelyDuplicateCard(signature, existingSignatures)) {
-        skippedDuplicates++;
-        continue;
-      }
-      existingSignatures.push(signature);
-
-      const q = await pool.query(
-        `INSERT INTO card (
-           deck_id, card_front, card_back, created_at,
-           ease_factor, interval_days, repetitions, due_date, last_reviewed
-         )
-         VALUES ($1, $2, $3, now(), 2.5, 0, 0, now(), null)
-         RETURNING id, deck_id, card_front, card_back, created_at,
-                   ease_factor, interval_days, repetitions, due_date, last_reviewed`,
-        [deckId, front, back]
+      onProgress(82, "Checking duplicates");
+      const existingQ = await pool.query(
+        `SELECT card_front, card_back
+         FROM card
+         WHERE deck_id = $1`,
+        [deckId]
       );
-      insertedCards.push(q.rows[0]);
-    }
+      const existingSignatures = existingQ.rows.map((r) =>
+        buildCardSignature(r.card_front, r.card_back)
+      );
 
-    const removedDuplicates = 0;
+      const insertedCards = [];
+      let skippedDuplicates = 0;
+      const totalCards = Math.max(1, flashcards.length);
+      for (let idx = 0; idx < flashcards.length; idx += 1) {
+        const card = flashcards[idx];
+        const persistProgress = 82 + Math.round(((idx + 1) / totalCards) * 16);
+        onProgress(persistProgress, `Saving cards ${idx + 1}/${totalCards}`);
+        const front = String(card.front ?? "").trim();
+        const back = String(card.back ?? "").trim();
+        if (!front || !back) {
+          continue;
+        }
 
-    console.log("File import insert summary", {
-      deckId,
-      inserted: insertedCards.length,
-      skippedDuplicates,
-      removedDuplicates,
-    });
+        const signature = buildCardSignature(front, back);
+        if (isLikelyDuplicateCard(signature, existingSignatures)) {
+          skippedDuplicates++;
+          continue;
+        }
+        existingSignatures.push(signature);
 
-    return res.json({
-      flashcards: { inserted: insertedCards.length, skippedDuplicates, removedDuplicates },
-      insertedCards,
-      quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
-    });
-  } catch (err) {
-    console.error(err);
-    const errMsg = err instanceof Error ? err.message : "Unknown error";
-    if (errMsg.includes("NO_EXTRACTABLE_TEXT")) {
-      const ocrRuntimeIssue = errMsg.includes("OCR_UNAVAILABLE") || errMsg.includes("tesseract binary not found");
-      return res.status(422).json({
-        error: "No extractable text found in uploaded file",
-        message: ocrRuntimeIssue
-          ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
-          : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+        const q = await pool.query(
+          `INSERT INTO card (
+             deck_id, card_front, card_back, created_at,
+             ease_factor, interval_days, repetitions, due_date, last_reviewed
+           )
+           VALUES ($1, $2, $3, now(), 2.5, 0, 0, now(), null)
+           RETURNING id, deck_id, card_front, card_back, created_at,
+                     ease_factor, interval_days, repetitions, due_date, last_reviewed`,
+          [deckId, front, back]
+        );
+        insertedCards.push(q.rows[0]);
+      }
+
+      const removedDuplicates = 0;
+
+      console.log("File import insert summary", {
+        deckId,
+        inserted: insertedCards.length,
+        skippedDuplicates,
+        removedDuplicates,
       });
-    }
 
-    return res.status(500).json({
-      error: "Failed to import file(s)",
-      message: errMsg,
-    });
-  } finally {
-    // Clean up uploaded file
-    try {
-      await fs.unlink(file.path);
-    } catch (_) {}
-    
-    // Clean up extracted directories
-    for (const dir of tempDirs) {
+      onProgress(100, "Completed");
+
+      return {
+        flashcards: { inserted: insertedCards.length, skippedDuplicates, removedDuplicates },
+        insertedCards,
+        quiz: Array.isArray(studySet?.quiz) ? studySet.quiz : [],
+      };
+    } catch (err) {
+      if (err && err.importStatus && err.importBody) {
+        throw err;
+      }
+
+      console.error(err);
+      const errMsg = err instanceof Error ? err.message : "Unknown error";
+      if (errMsg.includes("NO_EXTRACTABLE_TEXT")) {
+        const ocrRuntimeIssue = errMsg.includes("OCR_UNAVAILABLE") || errMsg.includes("tesseract binary not found");
+        throw importFailure(422, {
+          error: "No extractable text found in uploaded file",
+          message: ocrRuntimeIssue
+            ? "Scanned/image-only document detected, but OCR is not configured on the server runtime. On Heroku, add Apt buildpack and an Aptfile with tesseract packages, then redeploy."
+            : "This file looks like a scanned/image-only document. Export as searchable PDF or upload a text-based file.",
+        });
+      }
+
+      throw importFailure(500, {
+        error: "Failed to import file(s)",
+        message: errMsg,
+      });
+    } finally {
       try {
-        await fs.rm(dir, { recursive: true, force: true });
+        await fs.unlink(file.path);
       } catch (_) {}
+
+      for (const dir of tempDirs) {
+        try {
+          await fs.rm(dir, { recursive: true, force: true });
+        } catch (_) {}
+      }
+
+      for (const tempFile of tempFiles) {
+        try {
+          await fs.unlink(tempFile);
+        } catch (_) {}
+      }
+    }
+  };
+
+  if (!wantsAsync) {
+    try {
+      const payload = await executeImport();
+      return res.json(payload);
+    } catch (err) {
+      if (err && err.importStatus && err.importBody) {
+        return res.status(err.importStatus).json(err.importBody);
+      }
+      return res.status(500).json({ error: "Failed to import file(s)", message: "Unknown error" });
     }
   }
+
+  const job = createImportJob({ userId, deckId, fileName: file.originalname || file.filename || "upload" });
+
+  setImmediate(async () => {
+    const updateProgress = (progress, phase) => {
+      setImportJobState(job.id, {
+        status: "running",
+        progress,
+        phase,
+      });
+    };
+    updateProgress(2, "Queued");
+    try {
+      const result = await executeImport(updateProgress);
+      setImportJobState(job.id, {
+        status: "succeeded",
+        progress: 100,
+        phase: "Completed",
+        result,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      const status = err && err.importStatus ? err.importStatus : 500;
+      const body = err && err.importBody
+        ? err.importBody
+        : { error: "Failed to import file(s)", message: err instanceof Error ? err.message : "Unknown error" };
+      setImportJobState(job.id, {
+        status: "failed",
+        progress: 100,
+        phase: "Failed",
+        error: {
+          status,
+          ...body,
+        },
+        completedAt: new Date().toISOString(),
+      });
+    }
+  });
+
+  return res.status(202).json({
+    jobId: job.id,
+    status: job.status,
+    progress: job.progress,
+    phase: job.phase,
+  });
+});
+
+app.get("/api/decks/import-jobs/:jobId", authenticate, async (req, res) => {
+  pruneImportJobs();
+  const job = importJobs.get(req.params.jobId);
+
+  if (!job || job.userId !== req.user.user_id) {
+    return res.status(404).json({ error: "Import job not found" });
+  }
+
+  return res.json({
+    jobId: job.id,
+    deckId: job.deckId,
+    fileName: job.fileName,
+    status: job.status,
+    progress: job.progress,
+    phase: job.phase,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    completedAt: job.completedAt,
+    result: job.status === "succeeded" ? job.result : undefined,
+    error: job.status === "failed" ? job.error : undefined,
+  });
 });
 
 function ratingToQuality(rating) {
@@ -1227,6 +1525,57 @@ app.post("/api/decks", authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.patch("/api/decks/:id", authenticate, async (req, res) => {
+  const deckId = Number(req.params.id);
+  if (!Number.isFinite(deckId)) {
+    return res.status(400).json({ error: "Invalid deck id" });
+  }
+
+  const {
+    deck_name,
+    subject = null,
+    course_number = null,
+    instructor = null,
+  } = req.body ?? {};
+
+  if (!deck_name || typeof deck_name !== "string" || !deck_name.trim()) {
+    return res.status(400).json({ error: "deck_name is required" });
+  }
+
+  if (course_number != null && !Number.isFinite(Number(course_number))) {
+    return res.status(400).json({ error: "course_number must be a number or null" });
+  }
+
+  try {
+    const q = await pool.query(
+      `UPDATE deck
+       SET deck_name = $1,
+           subject = $2,
+           course_number = $3,
+           instructor = $4
+       WHERE id = $5 AND user_id = $6
+       RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at`,
+      [
+        deck_name.trim(),
+        subject ?? null,
+        course_number == null ? null : Number(course_number),
+        instructor ?? null,
+        deckId,
+        req.user.user_id,
+      ]
+    );
+
+    if (q.rowCount === 0) {
+      return res.status(404).json({ error: "Deck not found" });
+    }
+
+    return res.json(q.rows[0]);
+  } catch (err) {
+    console.error("PATCH /api/decks/:id error:", err);
+    return res.status(500).json({ error: "Database error" });
   }
 });
 

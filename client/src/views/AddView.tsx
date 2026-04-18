@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { styles } from "../styles/DeckStyles";
+import type { ImportPdfProgressHandlers } from "../API/DeckAPI";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".pdf",
@@ -31,11 +32,17 @@ const SUPPORTED_MIME_TYPES = new Set([
 export default function AddView(props: {
   deckId: number;
   onCreate: (front: string, back: string) => Promise<void> | void;
-  onImportPdf: (file: File) => Promise<{ inserted: number; skippedDuplicates?: number }>;
+  onImportPdf: (
+    file: File,
+    handlers?: ImportPdfProgressHandlers
+  ) => Promise<{ inserted: number; skippedDuplicates?: number }>;
 }) {
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
   const [isUploading, setIsUploading] = useState(false);
+  const [processingProgress, setProcessingProgress] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingPhase, setProcessingPhase] = useState("Preparing upload");
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -71,7 +78,27 @@ export default function AddView(props: {
 
     try {
       setIsUploading(true);
-      const result = await props.onImportPdf(file);
+      setIsProcessing(false);
+      setProcessingProgress(0);
+      setProcessingPhase("Uploading file");
+      const result = await props.onImportPdf(file, {
+        onProgress: (progress) => {
+          setIsProcessing(true);
+          setProcessingProgress((current) => Math.max(current, Math.round(progress)));
+        },
+        onPhase: (phase) => {
+          setIsProcessing(true);
+          setProcessingPhase(phase);
+        },
+        onUploadComplete: () => {
+          setIsProcessing(true);
+          setProcessingProgress((current) => Math.max(current, 10));
+          setProcessingPhase("Processing import");
+        },
+      });
+      setProcessingProgress(100);
+      setProcessingPhase("Completed");
+      setIsProcessing(false);
       const skipped = result.skippedDuplicates ?? 0;
       if (result.inserted === 0 && skipped > 0) {
         setUploadMsg(`No new flashcards added. Skipped ${skipped} duplicates from ${file.name}.`);
@@ -83,7 +110,10 @@ export default function AddView(props: {
     } catch (err) {
       setUploadErr(err instanceof Error ? err.message : "Failed to import file.");
     } finally {
+      await new Promise((resolve) => window.setTimeout(resolve, 200));
       setIsUploading(false);
+      setIsProcessing(false);
+      setProcessingProgress(0);
       e.target.value = "";
     }
   }
@@ -134,6 +164,40 @@ export default function AddView(props: {
           >
             {isUploading ? "Importing..." : "Upload File"}
           </button>
+          {isUploading ? (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ ...styles.muted, marginBottom: 6 }}>
+                {isProcessing ? `${processingPhase}... ${processingProgress}%` : "Uploading file..."}
+              </div>
+              {isProcessing ? (
+                <div
+                  role="progressbar"
+                  aria-label="File processing progress"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={processingProgress}
+                  style={{
+                    width: "100%",
+                    height: 8,
+                    borderRadius: 999,
+                    background: "#e5e7eb",
+                    overflow: "hidden",
+                    border: "1px solid #d1d5db",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${processingProgress}%`,
+                      height: "100%",
+                      borderRadius: 999,
+                      background: "linear-gradient(90deg, #111827 0%, #4b5563 100%)",
+                      transition: "width 120ms linear",
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {uploadMsg ? <div style={{ ...styles.muted, marginTop: 10 }}>{uploadMsg}</div> : null}
           {uploadErr ? <div style={{ ...styles.muted, marginTop: 10, color: "#dc2626" }}>{uploadErr}</div> : null}
         </div>
