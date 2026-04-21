@@ -80,6 +80,116 @@ describe('Auth routes', () => {
     expect(res.body).toHaveProperty('message', 'Logged out');
   });
 
+  test('PATCH /auth/username updates username and refreshes auth cookie', async () => {
+    const poolQuery = jest.fn();
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67, username: 'new_name', email: '123@gmail.com' }],
+    });
+
+    const { Pool } = require('pg');
+    const jwt = require('jsonwebtoken');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/username')
+      .set('Cookie', ['token=signed-token'])
+      .send({ username: 'new_name' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ user_id: 67, username: 'new_name', email: '123@gmail.com', auth_provider: 'local' });
+    expect(jwt.sign).toHaveBeenCalled();
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  test('PATCH /auth/password/set-initial sets a password for a Google-authenticated session', async () => {
+    const poolQuery = jest.fn();
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67, username: '123', email: '123@gmail.com' }],
+    });
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67, username: '123', email: '123@gmail.com' }],
+    });
+
+    const { Pool } = require('pg');
+    const bcrypt = require('bcryptjs');
+    const jwt = require('jsonwebtoken');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+    jwt.verify.mockImplementationOnce(() => ({ user_id: 67, username: '123', auth_provider: 'google' }));
+    bcrypt.hash.mockResolvedValueOnce('new-google-hash');
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/password/set-initial')
+      .set('Cookie', ['token=signed-token'])
+      .send({ newPassword: 'new-password-1' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ user_id: 67, username: '123', email: '123@gmail.com', auth_provider: 'local' });
+    expect(bcrypt.hash).toHaveBeenCalledWith('new-password-1', 10);
+    expect(jwt.sign).toHaveBeenCalled();
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  test('PATCH /auth/password/set-initial rejects non-Google sessions', async () => {
+    const poolQuery = jest.fn();
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/password/set-initial')
+      .set('Cookie', ['token=signed-token'])
+      .send({ newPassword: 'new-password-1' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Initial password setup is only available for Google-authenticated sessions' });
+    expect(poolQuery).not.toHaveBeenCalled();
+  });
+
+  test('PATCH /auth/username validates username length before hitting database', async () => {
+    const poolQuery = jest.fn();
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/username')
+      .set('Cookie', ['token=signed-token'])
+      .send({ username: 'ab' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Username must be between 3 and 30 characters' });
+    expect(poolQuery).not.toHaveBeenCalled();
+  });
+
+  test('PATCH /auth/username handles duplicate username constraint', async () => {
+    const poolQuery = jest.fn();
+    const duplicateErr = new Error('duplicate key value violates unique constraint');
+    duplicateErr.code = '23505';
+    poolQuery.mockRejectedValueOnce(duplicateErr);
+
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/username')
+      .set('Cookie', ['token=signed-token'])
+      .send({ username: 'existing_user' });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'Username already exists' });
+  });
+
   test('PATCH /auth/password updates the password when the current password is valid', async () => {
     const poolQuery = jest.fn();
     poolQuery.mockResolvedValueOnce({

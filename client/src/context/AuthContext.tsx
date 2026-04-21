@@ -4,12 +4,14 @@ interface User {
   user_id: number;
   username: string;
   email: string;
+  auth_provider?: "local" | "google";
 }
 
 interface AuthContextType {
   user: User | null;
   login: (login: string, password: string) => Promise<void>;
   register: (username: string, email: string, password: string) => Promise<void>;
+  setUser: (user: User | null) => void;
   logout: () => Promise<void>;
   fetchUser: () => Promise<void>;
   loading: boolean;
@@ -65,6 +67,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       user_id: data.user_id,
       username: data.username,
       email: data.email,
+      auth_provider: data.auth_provider,
     });
   };
 
@@ -88,7 +91,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, fetchUser, loading }}>
+    <AuthContext.Provider value={{ user, login, register, setUser, logout, fetchUser, loading }}>
       {children}
     </AuthContext.Provider>
   );
