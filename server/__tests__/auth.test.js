@@ -20,6 +20,7 @@ jest.mock('jsonwebtoken', () => ({
 let app;
 
 beforeEach(() => {
+  jest.clearAllMocks();
   // reset module registry so server re-creates Pool with current mock when required
   jest.resetModules();
 });
@@ -77,5 +78,134 @@ describe('Auth routes', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('message', 'Logged out');
+  });
+
+  test('PATCH /auth/password updates the password when the current password is valid', async () => {
+    const poolQuery = jest.fn();
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67, password_hash: 'old-hash' }],
+    });
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67 }],
+    });
+
+    const { Pool } = require('pg');
+    const bcrypt = require('bcryptjs');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+    bcrypt.compare.mockResolvedValueOnce(true);
+    bcrypt.hash.mockResolvedValueOnce('new-hash');
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/password')
+      .set('Cookie', ['token=signed-token'])
+      .send({ currentPassword: 'old-password', newPassword: 'new-password-1' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ message: 'Password updated successfully' });
+    expect(bcrypt.compare).toHaveBeenCalledWith('old-password', 'old-hash');
+    expect(bcrypt.hash).toHaveBeenCalledWith('new-password-1', 10);
+    expect(poolQuery).toHaveBeenCalledTimes(2);
+  });
+
+  test('PATCH /auth/password rejects short new passwords before hitting the database', async () => {
+    const poolQuery = jest.fn();
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/password')
+      .set('Cookie', ['token=signed-token'])
+      .send({ currentPassword: 'old-password', newPassword: 'short' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'newPassword must be at least 8 characters long' });
+    expect(poolQuery).not.toHaveBeenCalled();
+  });
+
+  test('PATCH /auth/password rejects an incorrect current password', async () => {
+    const poolQuery = jest.fn();
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67, password_hash: 'old-hash' }],
+    });
+
+    const { Pool } = require('pg');
+    const bcrypt = require('bcryptjs');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+    bcrypt.compare.mockResolvedValueOnce(false);
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/password')
+      .set('Cookie', ['token=signed-token'])
+      .send({ currentPassword: 'wrong-password', newPassword: 'new-password-1' });
+
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Current password is incorrect' });
+    expect(bcrypt.hash).not.toHaveBeenCalled();
+  });
+
+  test('PATCH /auth/password returns 404 when the account row is missing', async () => {
+    const poolQuery = jest.fn();
+    poolQuery.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .patch('/auth/password')
+      .set('Cookie', ['token=signed-token'])
+      .send({ currentPassword: 'old-password', newPassword: 'new-password-1' });
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Account not found' });
+  });
+
+  test('DELETE /auth/account deletes the account and clears the cookie', async () => {
+    const poolQuery = jest.fn();
+    poolQuery.mockResolvedValueOnce({
+      rowCount: 1,
+      rows: [{ user_id: 67 }],
+    });
+
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .delete('/auth/account')
+      .set('Cookie', ['token=signed-token'])
+      .send({ confirmation: '123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ message: 'Account deleted successfully' });
+    expect(res.headers['set-cookie']).toBeDefined();
+  });
+
+  test('DELETE /auth/account rejects mismatched confirmation text', async () => {
+    const poolQuery = jest.fn();
+    const { Pool } = require('pg');
+    Pool.mockImplementation(() => ({ query: poolQuery }));
+
+    app = require('../server');
+
+    const res = await request(app)
+      .delete('/auth/account')
+      .set('Cookie', ['token=signed-token'])
+      .send({ confirmation: 'wrong-name' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'Confirmation does not match username' });
+    expect(poolQuery).not.toHaveBeenCalled();
   });
 });

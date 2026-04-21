@@ -243,5 +243,5 @@ export async function importPdfToDeck(
 }
 
 export async function getSavedPublicDecks(): Promise<PublicDeckRow[]> {
-  return api<PublicDeckRow[]>("/api/community/saved");
+  return api<PublicDeckRow[]>("/api/saved");
 }

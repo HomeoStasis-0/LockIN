@@ -100,6 +100,7 @@ export default function Dashboard() {
   const[bkdecks, setbkDecks] = useState<PublicDeckRow[]>([]);
   const [bkdecksLoading, setbkDecksLoading] = useState(false);
   const [bkdecksError, setbkDecksError] = useState<string | null>(null);
+  const [unsaveDeckId, setUnsaveDeckId] = useState<number | null>(null);
 
 
   // load decks once user is known
@@ -275,6 +276,7 @@ export default function Dashboard() {
 
   async function unsaveCourse(publicDeckId: number) {
     try {
+      setUnsaveDeckId(publicDeckId);
       await api<{ saved: boolean; removed_cards: number }>(`/api/saved/${publicDeckId}`, {
         method: "DELETE",
       });
@@ -286,6 +288,8 @@ export default function Dashboard() {
       alert("Bookmark removed");
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to remove bookmark");
+    } finally {
+      setUnsaveDeckId(null);
     }
   }
 
@@ -495,9 +499,10 @@ export default function Dashboard() {
 
                   <button
                     onClick={() => unsaveCourse(d.public_deck_id)}
-                    className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
+                    disabled={unsaveDeckId === d.public_deck_id}
+                    className="rounded-xl border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-60"
                   >
-                    Remove
+                    {unsaveDeckId === d.public_deck_id ? "Removing..." : "Remove Bookmark"}
                   </button>
                 </div>
               </div>
