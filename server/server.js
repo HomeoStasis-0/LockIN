@@ -17,6 +17,7 @@ const nodemailer = require("nodemailer");
 const crypto = require('crypto');
 
 const app = express();
+app.disable("x-powered-by");
 
 const uploadDir = path.join(__dirname, "..", "uploads");
 const extractDir = path.join(__dirname, "..", "uploads", "extracted");
@@ -450,8 +451,61 @@ const corsOptions = {
 }
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
+
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
+
+function hasDangerousObjectKeys(value) {
+  if (!value || typeof value !== "object") return false;
+
+  if (Array.isArray(value)) {
+    return value.some(hasDangerousObjectKeys);
+  }
+
+  for (const key of Object.keys(value)) {
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      return true;
+    }
+    if (hasDangerousObjectKeys(value[key])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+app.use((req, res, next) => {
+  if (hasDangerousObjectKeys(req.body) || hasDangerousObjectKeys(req.query) || hasDangerousObjectKeys(req.params)) {
+    return res.status(400).json({ error: "Invalid request payload" });
+  }
+  return next();
+});
+
+function isValidUsername(value) {
+  return /^[a-zA-Z0-9._-]{3,30}$/.test(String(value || ""));
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
+}
+
+function isValidLogin(value) {
+  const login = String(value || "").trim();
+  if (!login || login.length > 120) return false;
+  return /^[a-zA-Z0-9._@+-]+$/.test(login);
+}
+
+function isValidPasswordLength(value) {
+  const password = String(value || "");
+  return password.length >= 8 && password.length <= 256;
+}
 
 // NOTE: production static serving moved to after API routes so API endpoints work
 const connectionString = process.env.DATABASE_URL;
@@ -478,11 +532,32 @@ app.get("/api", async (req, res) => {
 });
 
 // JWT helper
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getConfiguredAdminEmails() {
+  const envEmails = String(process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map(normalizeEmail)
+    .filter(Boolean);
+
+  return new Set(envEmails);
+}
+
+const ADMIN_EMAILS = getConfiguredAdminEmails();
+
+function isAdminEmail(email) {
+  return ADMIN_EMAILS.has(normalizeEmail(email));
+}
+
 const generateToken = (user) => {
   return jwt.sign(
     {
       user_id: user.user_id,
-      username: user.username
+      username: user.username,
+      auth_provider: user.auth_provider || "local",
+      is_admin: Boolean(user.is_admin),
     },
     process.env.JWT_SECRET,
     { expiresIn: "15m" }
@@ -662,7 +737,11 @@ app.get("/auth/google/callback", async (req, res) => {
     }
 
     const user = await findOrCreateGoogleUser(profile);
-    const token = generateToken(user);
+    const token = generateToken({
+      ...user,
+      auth_provider: "google",
+      is_admin: isAdminEmail(user.email),
+    });
 
     res.cookie("token", token, {
       httpOnly: true,
@@ -679,7 +758,21 @@ app.get("/auth/google/callback", async (req, res) => {
 
 // Registration
 app.post("/auth/register", async (req, res) => {
-  const { username, email, password } = req.body;
+  const username = String(req.body?.username || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const password = String(req.body?.password || "");
+
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: "Username must be 3-30 characters and use only letters, numbers, dot, underscore, or hyphen" });
+  }
+
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ error: "A valid email is required" });
+  }
+
+  if (!isValidPasswordLength(password)) {
+    return res.status(400).json({ error: "Password must be between 8 and 256 characters" });
+  }
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -693,7 +786,11 @@ app.post("/auth/register", async (req, res) => {
     );
 
     const user = result.rows[0];
-    const token = generateToken(user);
+    const token = generateToken({
+      ...user,
+      auth_provider: "local",
+      is_admin: isAdminEmail(user.email),
+    });
 
     res.cookie("token", token, {
       httpOnly: true,
@@ -701,7 +798,11 @@ app.post("/auth/register", async (req, res) => {
       secure: false
     });
 
-    res.json(user);
+    res.json({
+      ...user,
+      auth_provider: "local",
+      is_admin: isAdminEmail(user.email),
+    });
   } catch (err) {
     console.error(err);
     res.status(400).json({
@@ -712,7 +813,16 @@ app.post("/auth/register", async (req, res) => {
 
 // Login with username or email
 app.post("/auth/login", async (req, res) => {
-  const { login, password } = req.body;
+  const login = String(req.body?.login || "").trim();
+  const password = String(req.body?.password || "");
+
+  if (!isValidLogin(login)) {
+    return res.status(400).json({ error: "Invalid login format" });
+  }
+
+  if (password.length === 0 || password.length > 256) {
+    return res.status(400).json({ error: "Invalid password format" });
+  }
 
   const result = await pool.query(
     `SELECT * FROM users
@@ -737,7 +847,11 @@ app.post("/auth/login", async (req, res) => {
       error: "Invalid credentials"
     });
 
-  const token = generateToken(user);
+  const token = generateToken({
+    ...user,
+    auth_provider: "local",
+    is_admin: isAdminEmail(user.email),
+  });
 
   res.cookie("token", token, {
     httpOnly: true,
@@ -748,7 +862,9 @@ app.post("/auth/login", async (req, res) => {
   res.json({
     user_id: user.user_id,
     username: user.username,
-    email: user.email
+    email: user.email,
+    auth_provider: "local",
+    is_admin: isAdminEmail(user.email),
   });
 });
 
@@ -882,7 +998,11 @@ app.get("/auth/me", authenticate, async (req, res) => {
     [req.user.user_id]
   );
 
-  res.json(result.rows[0]);
+  res.json({
+    ...result.rows[0],
+    auth_provider: req.user.auth_provider || "local",
+    is_admin: Boolean(req.user.is_admin),
+  });
 });
 
 // Logout
@@ -891,9 +1011,64 @@ app.post("/auth/logout", (req, res) => {
   res.json({ message: "Logged out" });
 });
 
+app.patch("/auth/username", authenticate, async (req, res) => {
+  const username = String(req.body?.username || "").trim();
+
+  if (!isValidUsername(username)) {
+    return res.status(400).json({ error: "Username must be 3-30 characters and use only letters, numbers, dot, underscore, or hyphen" });
+  }
+
+  try {
+    const updateQ = await pool.query(
+      `UPDATE users
+       SET username = $1
+       WHERE user_id = $2
+       RETURNING user_id, username, email`,
+      [username, req.user.user_id]
+    );
+
+    if (updateQ.rowCount === 0) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    const authProvider = req.user.auth_provider || "local";
+    const updatedUser = updateQ.rows[0];
+    const token = generateToken({
+      ...updatedUser,
+      auth_provider: authProvider,
+      is_admin: isAdminEmail(updatedUser.email),
+    });
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+    });
+
+    return res.json({
+      ...updatedUser,
+      auth_provider: authProvider,
+      is_admin: isAdminEmail(updatedUser.email),
+    });
+  } catch (err) {
+    if (err && err.code === "23505") {
+      return res.status(409).json({ error: "Username already exists" });
+    }
+    console.error("PATCH /auth/username error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
 app.patch("/auth/password", authenticate, async (req, res) => {
   const currentPassword = req.body?.currentPassword;
   const newPassword = req.body?.newPassword;
+
+  if (req.user.auth_provider === "google") {
+    return res.status(400).json({
+      error: "Google-authenticated accounts must set an initial password first",
+      code: "INITIAL_PASSWORD_REQUIRED",
+    });
+  }
 
   if (typeof currentPassword !== "string" || currentPassword.length === 0) {
     return res.status(400).json({ error: "currentPassword is required" });
@@ -903,8 +1078,8 @@ app.patch("/auth/password", authenticate, async (req, res) => {
     return res.status(400).json({ error: "newPassword is required" });
   }
 
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: "newPassword must be at least 8 characters long" });
+  if (!isValidPasswordLength(newPassword)) {
+    return res.status(400).json({ error: "newPassword must be between 8 and 256 characters long" });
   }
 
   try {
@@ -943,6 +1118,71 @@ app.patch("/auth/password", authenticate, async (req, res) => {
     return res.json({ message: "Password updated successfully" });
   } catch (err) {
     console.error("PATCH /auth/password error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
+app.patch("/auth/password/set-initial", authenticate, async (req, res) => {
+  const newPassword = req.body?.newPassword;
+
+  if (req.user.auth_provider !== "google") {
+    return res.status(400).json({ error: "Initial password setup is only available for Google-authenticated sessions" });
+  }
+
+  if (typeof newPassword !== "string" || newPassword.length === 0) {
+    return res.status(400).json({ error: "newPassword is required" });
+  }
+
+  if (!isValidPasswordLength(newPassword)) {
+    return res.status(400).json({ error: "newPassword must be between 8 and 256 characters long" });
+  }
+
+  try {
+    const userQ = await pool.query(
+      `SELECT user_id, username, email
+       FROM users
+       WHERE user_id = $1`,
+      [req.user.user_id]
+    );
+
+    if (userQ.rowCount === 0) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    const updateQ = await pool.query(
+      `UPDATE users
+       SET password_hash = $1
+       WHERE user_id = $2
+       RETURNING user_id, username, email`,
+      [hashedPassword, req.user.user_id]
+    );
+
+    if (updateQ.rowCount === 0) {
+      return res.status(404).json({ error: "Account not found" });
+    }
+
+    const updatedUser = updateQ.rows[0];
+    const token = generateToken({
+      ...updatedUser,
+      auth_provider: "local",
+      is_admin: isAdminEmail(updatedUser.email),
+    });
+
+    res.cookie("token", token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: false,
+    });
+
+    return res.json({
+      ...updatedUser,
+      auth_provider: "local",
+      is_admin: isAdminEmail(updatedUser.email),
+    });
+  } catch (err) {
+    console.error("PATCH /auth/password/set-initial error:", err);
     return res.status(500).json({ error: "Database error" });
   }
 });
@@ -1470,6 +1710,7 @@ app.delete("/api/cards/:id", async (req, res) => {
 
 app.get("/api/decks", authenticate, async (req, res) => {
   try {
+    const isAdmin = Boolean(req.user.is_admin);
     const result = await pool.query(
       `
       SELECT
@@ -1487,10 +1728,10 @@ app.get("/api/decks", authenticate, async (req, res) => {
       FROM deck d
       LEFT JOIN public_deck pd
         ON pd.deck_id = d.id
-      WHERE d.user_id = $1
+      WHERE ($1::boolean = true OR d.user_id = $2)
       ORDER BY d.created_at DESC
       `,
-      [req.user.user_id]
+      [isAdmin, req.user.user_id]
     );
 
     res.json(result.rows);
@@ -1505,6 +1746,18 @@ app.post("/api/decks", authenticate, async (req, res) => {
 
   if (!deck_name || typeof deck_name !== "string") {
     return res.status(400).json({ error: "deck_name is required" });
+  }
+
+  if (String(deck_name).trim().length > 120) {
+    return res.status(400).json({ error: "deck_name is too long (max 120 chars)" });
+  }
+
+  if (subject != null && String(subject).length > 80) {
+    return res.status(400).json({ error: "subject is too long (max 80 chars)" });
+  }
+
+  if (instructor != null && String(instructor).length > 120) {
+    return res.status(400).json({ error: "instructor is too long (max 120 chars)" });
   }
 
   try {
@@ -1545,18 +1798,31 @@ app.patch("/api/decks/:id", authenticate, async (req, res) => {
     return res.status(400).json({ error: "deck_name is required" });
   }
 
+  if (String(deck_name).trim().length > 120) {
+    return res.status(400).json({ error: "deck_name is too long (max 120 chars)" });
+  }
+
+  if (subject != null && String(subject).length > 80) {
+    return res.status(400).json({ error: "subject is too long (max 80 chars)" });
+  }
+
+  if (instructor != null && String(instructor).length > 120) {
+    return res.status(400).json({ error: "instructor is too long (max 120 chars)" });
+  }
+
   if (course_number != null && !Number.isFinite(Number(course_number))) {
     return res.status(400).json({ error: "course_number must be a number or null" });
   }
 
   try {
+    const isAdmin = Boolean(req.user.is_admin);
     const q = await pool.query(
       `UPDATE deck
        SET deck_name = $1,
            subject = $2,
            course_number = $3,
            instructor = $4
-       WHERE id = $5 AND user_id = $6
+       WHERE id = $5 AND ($7::boolean = true OR user_id = $6)
        RETURNING id, user_id, deck_name, subject, course_number, instructor, created_at`,
       [
         deck_name.trim(),
@@ -1565,6 +1831,7 @@ app.patch("/api/decks/:id", authenticate, async (req, res) => {
         instructor ?? null,
         deckId,
         req.user.user_id,
+        isAdmin,
       ]
     );
 
@@ -1588,13 +1855,14 @@ app.delete("/api/decks/:id", authenticate, async (req, res) => {
 
   const client = await pool.connect();
   try {
+    const isAdmin = Boolean(req.user.is_admin);
     await client.query("BEGIN");
 
     const ownerQ = await client.query(
       `SELECT id
        FROM deck
-       WHERE id = $1 AND user_id = $2`,
-      [deckId, req.user.user_id]
+       WHERE id = $1 AND ($3::boolean = true OR user_id = $2)`,
+      [deckId, req.user.user_id, isAdmin]
     );
 
     if (ownerQ.rowCount === 0) {
@@ -1645,13 +1913,14 @@ app.post("/api/decks/:id/publish", authenticate, async (req, res) => {
   }
 
   try {
+    const isAdmin = Boolean(req.user.is_admin);
     const deckQ = await pool.query(
       `
       SELECT id, user_id
       FROM deck
-      WHERE id = $1 AND user_id = $2
+      WHERE id = $1 AND ($3::boolean = true OR user_id = $2)
       `,
-      [deckId, req.user.user_id]
+      [deckId, req.user.user_id, isAdmin]
     );
 
     if (deckQ.rowCount === 0) {
@@ -1690,13 +1959,14 @@ app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
   }
 
   try {
+    const isAdmin = Boolean(req.user.is_admin);
     const deckQ = await pool.query(
       `
       SELECT id, user_id
       FROM deck
-      WHERE id = $1 AND user_id = $2
+      WHERE id = $1 AND ($3::boolean = true OR user_id = $2)
       `,
-      [deckId, req.user.user_id]
+      [deckId, req.user.user_id, isAdmin]
     );
 
     if (deckQ.rowCount === 0) {
@@ -1706,10 +1976,10 @@ app.delete("/api/decks/:id/publish", authenticate, async (req, res) => {
     const deleteQ = await pool.query(
       `
       DELETE FROM public_deck
-      WHERE deck_id = $1 AND user_id = $2
+      WHERE deck_id = $1 AND ($3::boolean = true OR user_id = $2)
       RETURNING id
       `,
-      [deckId, req.user.user_id]
+      [deckId, req.user.user_id, isAdmin]
     );
 
     if (deleteQ.rowCount === 0) {
