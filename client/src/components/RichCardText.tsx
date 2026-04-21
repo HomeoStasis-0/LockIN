@@ -249,11 +249,21 @@ export default function RichCardText(props: {
 }) {
   const value = normalizeMathDelimiters(String(props.text ?? ""));
 
+  const safeUrlTransform = (url: string) => {
+    const normalized = String(url || "").trim();
+    if (!normalized) return "";
+    if (/^(javascript|data|vbscript):/i.test(normalized)) {
+      return "";
+    }
+    return normalized;
+  };
+
   return (
     <div style={{ ...styles.richText, ...(props.style ?? {}) }}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath, remarkBreaks]}
         rehypePlugins={[rehypeKatex]}
+        urlTransform={safeUrlTransform}
         components={{
           p: ({ children }) => <p style={{ margin: "0 0 8px 0" }}>{children}</p>,
           ul: ({ children }) => <ul style={{ margin: "0 0 8px 18px" }}>{children}</ul>,
